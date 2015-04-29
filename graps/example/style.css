@@ -1,0 +1,10 @@
+html, body, div, * {
+  padding: 0;
+  margin: 0;
+  border: none;
+}
+
+.l-page {
+  width: 100%;
+  min-width: 1000px;
+}

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <title>Graphics</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="../dist/Charts.css" />
+  <script type="text/javascript" src="jquery.js"></script>
+  <script type="text/javascript" src="../dist/Charts.js"></script>
+
+  <script type="text/javascript">
+    $(document).ready(function() {
+      window.chart = new Charts({el: $('#container')[0]});
+
+      var socket = new WebSocket("wss://188.42.240.122:8443");
+      socket.onopen = function() {
+        var timer = new Date().getTime();
+        socket.send('subscribe:EUR');
+
+        chart
+          .viewMode('split')
+          .setTimer(timer + (7 * 60 * 1000));
+      };
+
+      socket.onclose = function(event) {
+        if (event.wasClean) {
+          console.log('Соединение закрыто чисто');
+        } else {
+          console.log('Обрыв соединения');
+        }
+        console.log('Код: ' + event.code + ' причина: ' + event.reason);
+      };
+
+      socket.onmessage = function(event) {
+        var data = JSON.parse(event.data);
+        var tick = data['EUR'];
+
+        chart.addPoint([tick.created_at*1000, tick.rate]);
+      };
+
+      socket.onerror = function(error) {
+        console.log("Ошибка " + error.message);
+      };
+    });
+  </script>
+</head>
+<body>
+  <div class="l-page">
+    <div id="container" style="height: 400px; min-width: 310px"></div>
+  </div>
+</body>
+</html>
