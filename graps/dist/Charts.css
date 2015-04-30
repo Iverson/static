@@ -170,6 +170,7 @@
     }
 
   .b-embd-chart__graph {
+    border-bottom: 1px solid #cacaca;
     position: absolute;
     width: 100%;
     height: 100%;
@@ -219,7 +220,7 @@
     width: 10px;
     height: 100%;
     background: #494b4e;
-    margin-left: -5px;
+    margin-left: -11px;
     display: none;
     cursor: ew-resize;
     z-index: 3;
@@ -255,6 +256,35 @@
         margin: 9px 7px 0 8px;
         cursor: pointer;
       }
+
+  .b-embd-chart__graph__ranges {
+    position: absolute;
+    bottom: 0px;
+    left: 0;
+    margin: 0;
+    padding: 0;
+    z-index: 6;
+  }
+
+    .b-embd-chart__graph__ranges li {
+      float: left;
+      cursor: pointer;
+      font-size: 8px;
+      padding: 0 15px;
+      color: #000;
+      height: 19px;
+      line-height: 20px;
+      background: #ededed;
+      list-style: none;
+    }
+
+    .b-embd-chart__graph__ranges li:hover {
+      background: #e0e1e3;
+    }
+
+    .b-embd-chart__graph__ranges li.active {
+      background: #c0c1c3;
+    }
 
 .b-embd-icon {
   display: inline-block;

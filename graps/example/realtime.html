@@ -9,39 +9,29 @@
   <script type="text/javascript" src="../dist/Charts.js"></script>
 
   <script type="text/javascript">
-    $(document).ready(function() {
-      window.chart = new Charts({el: $('#container')[0]});
+  $(document).ready(function() {
 
-      var socket = new WebSocket("wss://188.42.240.122:8443");
-      socket.onopen = function() {
-        var timer = new Date().getTime();
-        socket.send('subscribe:EUR');
+    var socket = new WebSocket("wss://188.42.240.122:8443");
+    var timer = new Date().getTime();
 
-        chart
-          .viewMode('split')
-          .setTimer(timer + (7 * 60 * 1000));
-      };
+    var time, value;
+    var data = {'EUR': []};
 
-      socket.onclose = function(event) {
-        if (event.wasClean) {
-          console.log('Соединение закрыто чисто');
-        } else {
-          console.log('Обрыв соединения');
-        }
-        console.log('Код: ' + event.code + ' причина: ' + event.reason);
-      };
+    for (i = 1800; i>0; i--) {
+      time = new Date().getTime() - 30*1000 - 400*i;
+      value = (0.5 - Math.random())/1000 + 1.11145;
+      data['EUR'].push({ "rate": "" + value, "created_at": "" + time/1000 });
+    }
 
-      socket.onmessage = function(event) {
-        var data = JSON.parse(event.data);
-        var tick = data['EUR'];
+    window.chart = new Charts({el: $('#container')[0], name: 'EUR'});
 
-        chart.addPoint([tick.created_at*1000, tick.rate]);
-      };
-
-      socket.onerror = function(error) {
-        console.log("Ошибка " + error.message);
-      };
+    chart.onReady(function() {
+      chart
+        .setCollection(data['EUR'])
+        .startListenSocket(socket)
+        .setTimer(data['EUR'][data['EUR'].length-1].created_at*1000 + (2 * 60 * 1000));
     });
+  });
   </script>
 </head>
 <body>

@@ -25,6 +25,8 @@ Charts.prototype = {
       return;
     }
 
+    this.options = options;
+
     this.el  = options.el;
     this.$el = $(this.el);
     this.$el.css({position: 'relative'});
@@ -51,15 +53,19 @@ Charts.prototype = {
     var self = this,
         x = 0;
 
-    _.bindAll(this, '_onChangeViewMode', '_onResizeHandleDrag', '_timerTick');
+    _.bindAll(this, '_onChangeViewMode', '_onResizeHandleDrag', '_timerTick', '_onSocketPush', '_onSocketOpen', '_childGraphOnReady');
 
     this.area        = new ChartBase({el: this.$area[0]});
     this.candlestick = new ChartCandlestick({el: this.$candlestick[0]});
     this.state       = {
+      childGrapsWaintingCount: 2,
       splitDelta: 0,
       splitHandleX: 0,
       timer: null
     };
+
+    this.area.$el.on('ready', this._childGraphOnReady);
+    this.candlestick.$el.on('ready', this._childGraphOnReady);
 
     this.$menuItems.on('click', function() { self.viewMode($(this).attr('mode')) });
     this.$root.on('changeViewMode', this._onChangeViewMode);
@@ -69,7 +75,15 @@ Charts.prototype = {
       .on('dragmove', this._onResizeHandleDrag);
   },
 
-  _chartOnLoad: function(chart, qwe) {
+  _childGraphOnReady: function() {
+    this.state.childGrapsWaintingCount -= 1;
+    this._checkRenderComplete();
+  },
+
+  _checkRenderComplete: function() {
+    if (this.state.childGrapsWaintingCount <= 0 && this.options.onReady) {
+      this.options.onReady();
+    }
   },
 
   _splitResize: function(deltaPercents) {
@@ -113,6 +127,10 @@ Charts.prototype = {
     this.area.chart.yAxis[0].update({labels: {enabled: !is_split}});
   },
 
+  onReady: function(callback) {
+    this.options.onReady = callback;
+  },
+
   viewMode: function(mode) {
     if (VIEW_MODES.indexOf(mode) == -1) {
       return;
@@ -142,6 +160,34 @@ Charts.prototype = {
     this.updateValue();
 
     return this;
+  },
+
+  setCollection: function(data) {
+    var serializedData = data.map(function(tick) {
+      return [+tick.created_at*1000, +tick.rate]; 
+    });
+
+    return this.setData(serializedData);
+  },
+
+  startListenSocket: function(socket) {
+    this.state.socket = socket;
+
+    socket.onopen    = this._onSocketOpen;
+    socket.onmessage = this._onSocketPush;
+
+    return this;
+  },
+
+  _onSocketPush: function(event) {
+    var data = JSON.parse(event.data);
+    var tick = data[this.options.name];
+
+    this.addPoint([+tick.created_at*1000, +tick.rate]);
+  },
+
+  _onSocketOpen: function(event) {
+    this.state.socket.send('subscribe:' + this.options.name);
   },
 
   updateLastTick: function(tick) {
@@ -12107,7 +12153,7 @@ module.exports = {
   chart: {
     backgroundColor: null,
     spacing: [0, 0, 0, 0],
-    margin: [0, 0, -25, 0],
+    margin: [0, 0, 0, 0],
     plotBorderWidth: 0,
     borderColor: "#bfbfbf",
     events: {},
@@ -12121,12 +12167,65 @@ module.exports = {
     enabled: false
   },
 
+  scrollbar: {
+    enabled: false
+  },
+
   credits: {
     enabled: false
   },
 
   rangeSelector : {
-    enabled: false
+    enabled: false,
+    inputEnabled: false,
+    buttonSpacing: 0,
+    buttons: [{
+      type: 'minute',
+      count: 1,
+      text: '1 мин'
+    }, {
+      type: 'hour',
+      count: 1,
+      text: '1 час'
+    }, {
+      type: 'day',
+      count: 1,
+      text: '1 день'
+    }, {
+      type: 'month',
+      count: 1,
+      text: '1 мес'
+    }, {
+      type: 'year',
+      count: 1,
+      text: '1 год'
+    }],
+    buttonTheme: {
+      fill: '#ededed',
+      stroke: 'none',
+      'stroke-width': 0,
+      style: {
+        color: '#000',
+        fontFamily: 'Lucida Grande',
+        fontSize: '8px',
+        height: '20px',
+        lineHeight: '19px',
+        fontWeight: 'normal'
+      },
+      states: {
+        hover: {
+        },
+        select: {
+          fill: '#c0c1c3',
+          style: {
+            fontWeight: 'normal'
+          }
+        }
+      }
+    },
+    labelStyle: {
+      fontSize: '0px'
+    }
   },
 
   title : {
@@ -12137,13 +12236,12 @@ module.exports = {
     lineWidth: 0,
     tickInterval: CONFIG.CHART.XAXIS_TICK_INTERVAL,
     range: CONFIG.CHART.XAXIS_RANGE,
-    // minRange: CONFIG.CHART.XAXIS_RANGE,
-    // maxRange: CONFIG.CHART.XAXIS_RANGE,
+    minRange: 60 * 1000,
     tickPosition: 'inside',
     offset: -22,
     ordinal: false,
-    minPadding: 0,
-    maxPadding: 0,
+    minPadding: 0.1,
+    maxPadding: 0.2,
     gridLineWidth: 1,
     gridLineColor: 'rgba(0, 0, 0, 0.07)',
     showFirstLabel: true,
@@ -12213,13 +12311,25 @@ module.exports = {
     XAXIS_RANGE: 12 * 60 * 1000,
     TIMER_LINE_WIDTH: 50 * 1000,
     SECONDS_IN_CANDLE: 15 * 1000,
+    RANGE_PRESETS: {
+      minute: 60 * 1000,
+      hour: 3600 * 1000,
+      day: 24 * 3600 * 1000,
+      month: 30 * 24 * 3600 * 1000,
+      year: 365 * 24 * 3600 * 1000,
+    },
     COLORS: {
       UP: '#57c580',
       DOWN: '#e57878'
     },
-    ZOOM: 1,
-    ZOOM_MIN: 1,
-    ZOOM_MAX: 4
+    ZOOM_COEF: 2,
+    RANGE_PRESETS: {
+      minute: 60 * 1000,
+      hour: 60 * 60 * 1000,
+      day: 24 * 60 * 60 * 1000,
+      month: 30 * 24 * 60 * 60 * 1000,
+      year: 365 * 24 * 60 * 60 * 1000,
+    }
   },
 
   OPTIONS: {
@@ -12280,7 +12390,7 @@ ChartBase.prototype = {
   },
 
   _initialize: function() {
-    _.bindAll(this, '_onScrollX', 'scrollToEnd', 'scrollLeft', 'scrollRight', 'zoomIn', 'zoomOut');
+    _.bindAll(this, '_onScrollX', 'scrollToEnd', 'scrollLeft', 'scrollRight', 'zoomIn', 'zoomOut', '_applyRangePreset');
 
     this.options.xAxis.events.setExtremes = this._onScrollX;
     this.chart = new Highcharts.StockChart(this.options);
@@ -12290,6 +12400,7 @@ ChartBase.prototype = {
     this.$scrollPanel.find('.scrollRight').on('click', this.scrollRight);
     this.$scrollPanel.find('.zoomIn').on('click', this.zoomIn);
     this.$scrollPanel.find('.zoomOut').on('click', this.zoomOut);
+    this.$rangePresets.on('click', this._applyRangePreset);
 
     this.state = {
       endSticked: true,
@@ -12305,8 +12416,10 @@ ChartBase.prototype = {
       self.options.chart.renderTo = self.$el.find('.b-embd-chart__graph__placeholder')[0];
 
       self.$scrollPanel  = self.$el.find('.b-embd-chart__graph__scroll-panel');
+      self.$rangePresets = self.$el.find('.b-embd-chart__graph__ranges li');
 
       self._initialize();
+      self.$el.trigger('ready');
     });
   },
 
@@ -12316,7 +12429,7 @@ ChartBase.prototype = {
   },
 
   setData: function(data) {
-    this.chart.series[0].setData(data);
+    this.chart.series[0].setData(data, true, true);
     this.updateLastTick(data[data.length-1]);
 
     return this;
@@ -12324,6 +12437,7 @@ ChartBase.prototype = {
 
   updateLastTick: function(tick) {
     this._updateYRange(tick);
+    this._setXAxisEndPadding();
     this.redraw();
   },
 
@@ -12341,6 +12455,16 @@ ChartBase.prototype = {
     }
   },
 
+  _applyRangePreset: function(evt) {
+    var el = $(evt.target),
+        range = CONFIG.CHART.RANGE_PRESETS[el.attr('data-range')];
+
+    this.$rangePresets.removeClass('active');
+    el.addClass('active');
+
+    this.setRange(range);
+  },
+
   xSet: function(options, redraw) {
     this.chart.xAxis[0].update.apply(this.chart.xAxis[0], arguments);
 
@@ -12354,7 +12478,8 @@ ChartBase.prototype = {
   },
 
   _updateYRange: function(tick) {
-    this.ySet({min: tick[1]*0.999, max: tick[1]*1.001}, false);
+    var extremes = {min: tick[1].toFixed(4), max: tick[1].toFixed(4)};
+    this.ySet(extremes);
   },
 
   scrollTo: function(time) {
@@ -12388,35 +12513,39 @@ ChartBase.prototype = {
     }
   },
 
-  zoom: function(level) {
-    if (level > CONFIG.CHART.ZOOM_MAX || level < CONFIG.CHART.ZOOM_MIN) {
-      return;
-    }
+  setRange: function(range) {
+    var extremes   = this.chart.xAxis[0].getExtremes(),
+        totalRange = extremes.dataMax - extremes.dataMin,
+        currRange  = extremes.max - extremes.min,
+        center     = extremes.min + currRange/2,
+        min        = Math.max(center-range/2, extremes.dataMin);
 
-    var range = +(CONFIG.CHART.XAXIS_RANGE/level).toFixed(0);
-    var extremes = this.chart.xAxis[0].getExtremes();
-
-    this.state.zoom = level;
+    this.chart.xAxis[0].setExtremes(min, min+range, true, true);
+    this.xSet({tickInterval: +(CONFIG.CHART.XAXIS_TICK_INTERVAL*range/CONFIG.CHART.XAXIS_RANGE).toFixed(0)});
     this.state.xRange = range;
-    this.xSet({range: range, tickInterval: +(CONFIG.CHART.XAXIS_TICK_INTERVAL/level).toFixed(0)});
 
-    if (extremes.min > this._getStartTime()) {
-      this.scrollTo(extremes.max - range);
-    } else {
-      this.scrollTo(extremes.min);
-      this.state.endSticked = false;
-    }
+    this.state.endSticked = false;
   },
 
   zoomIn: function() {
-    this.zoom(this.state.zoom+1);
+    this.setRange(this.state.xRange/CONFIG.CHART.ZOOM_COEF);
   },
 
   zoomOut: function() {
-    this.zoom(this.state.zoom-1);
+    this.setRange(this.state.xRange*CONFIG.CHART.ZOOM_COEF);
   },
 
   redraw: function() {
+    try {
+      this.chart.redraw();
+    } catch(err) {
+      this.redraw();
+    }
+
+    return this;
+  },
+
+  _setXAxisEndPadding: function() {
     var extremes = this.chart.xAxis[0].getExtremes();
     var max, min,
         x_data = this.chart.series[0].xData;
@@ -12425,19 +12554,11 @@ ChartBase.prototype = {
     min = max - this.state.xRange;
     min = min < x_data[0] ? x_data[0] : min;
 
-    try {
-      this.xSet({min: x_data[0], max: Math.max(max, extremes.max)});
+    this.xSet({min: x_data[0], max: Math.max(max, extremes.max)});
 
-      if (this.state.endSticked) {
-        this.scrollTo(min);
-      }
-
-      this.chart.redraw();
-    } catch(err) {
-      this.redraw();
+    if (this.state.endSticked) {
+      this.scrollToEnd();
     }
-
-    return this;
   }
 };
 
@@ -12484,7 +12605,7 @@ ChartCandlestick.prototype.setData = function(data) {
     }
   }
 
-  this.chart.series[0].setData(candles);
+  this.chart.series[0].setData(candles, true, true);
   this.updateLastTick(tick);
 
   return this;
@@ -12527,7 +12648,7 @@ var _ = require('lodash');
 module.exports = function(obj){
 var __t,__p='',__j=Array.prototype.join,print=function(){__p+=__j.call(arguments,'');};
 with(obj||{}){
-__p+='<div class="b-embd-chart__graph__placeholder"></div><div class="b-embd-chart__graph__scroll-panel"><i class="b-embd-icon b-embd-icon-i-graphs-scroll-left scrollLeft"></i> <i class="b-embd-icon b-embd-icon-i-graphs-plus zoomIn"></i> <i class="b-embd-icon b-embd-icon-i-graphs-minus zoomOut"></i> <i class="b-embd-icon b-embd-icon-i-graphs-scroll-right scrollRight"></i> <i class="b-embd-icon b-embd-icon-i-graphs-scroll-end scrollToEnd"></i></div>';
+__p+='<div class="b-embd-chart__graph__placeholder"></div><div class="b-embd-chart__graph__scroll-panel"><i class="b-embd-icon b-embd-icon-i-graphs-scroll-left scrollLeft"></i> <i class="b-embd-icon b-embd-icon-i-graphs-plus zoomIn"></i> <i class="b-embd-icon b-embd-icon-i-graphs-minus zoomOut"></i> <i class="b-embd-icon b-embd-icon-i-graphs-scroll-right scrollRight"></i> <i class="b-embd-icon b-embd-icon-i-graphs-scroll-end scrollToEnd"></i></div><ul class="b-embd-chart__graph__ranges"><li data-range="minute">1 мин</li><li data-range="hour">1 час</li><li data-range="day">1 день</li><li data-range="month">1 мес</li><li data-range="year">1 год</li></ul>';
 }
 return __p;
 };
@@ -12537,7 +12658,7 @@ var _ = require('lodash');
 module.exports = function(obj){
 var __t,__p='',__j=Array.prototype.join,print=function(){__p+=__j.call(arguments,'');};
 with(obj||{}){
-__p+='<div class="b-embd-chart area"><span class="b-embd-chart__timer"></span><div class="b-embd-chart__graph b-embd-chart__graph_area"></div><div class="b-embd-chart__graph b-embd-chart__graph_candlestick"></div><span class="b-embd-chart__split-resize"><i class="b-embd-icon b-embd-icon-i-graphs-split-resize"></i></span><div class="b-embd-chart__value"><span class="b-embd-chart__value__t"></span></div><ul class="b-embd-chart__menu"><li class="area" mode="area"><i class="b-embd-icon b-embd-icon-i-graphs-area"></i></li><li class="candlestick" mode="candlestick"><i class="b-embd-icon b-embd-icon-i-graphs-candlestick"></i></li><li class="split" mode="split">Split</li><li class="unsplit" mode="area">Unsplit</li><li class="settings" mode="settings"><i class="b-embd-icon b-embd-icon-i-graphs-settings"></i></li></ul></div>';
+__p+='<div class="b-embd-chart candlestick"><span class="b-embd-chart__timer"></span><div class="b-embd-chart__graph b-embd-chart__graph_area"></div><div class="b-embd-chart__graph b-embd-chart__graph_candlestick"></div><span class="b-embd-chart__split-resize"><i class="b-embd-icon b-embd-icon-i-graphs-split-resize"></i></span><div class="b-embd-chart__value"><span class="b-embd-chart__value__t"></span></div><ul class="b-embd-chart__menu"><li class="area" mode="area"><i class="b-embd-icon b-embd-icon-i-graphs-area"></i></li><li class="candlestick" mode="candlestick"><i class="b-embd-icon b-embd-icon-i-graphs-candlestick"></i></li><li class="split" mode="split">Split</li><li class="unsplit" mode="area">Unsplit</li><li class="settings" mode="settings"><i class="b-embd-icon b-embd-icon-i-graphs-settings"></i></li></ul></div>';
 }
 return __p;
 };
