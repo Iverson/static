@@ -95,7 +95,9 @@ Charts.prototype = {
       .on('dragmove', this._onResizeHandleDrag);
 
     this.$el.bind('mousewheel', function(e){
-      if(e.originalEvent.wheelDelta /120 > 0) {
+      e.preventDefault();
+
+      if (e.originalEvent.wheelDelta /120 > 0) {
         self.zoomIn();
       } else {
         self.zoomOut();
@@ -12232,9 +12234,10 @@ module.exports = {
   plotOptions: {
     candlestick: {
       dataGrouping: {
-        enabled: false
+        // enabled: false
+        groupPixelWidth: 15
       },
-      // groupPadding: 0.1,
+      groupPadding: 0.05,
       fillOpacity: .7,
       marker: {
         enabled: false
@@ -12677,6 +12680,7 @@ ChartBase.prototype = {
 
     if (min < extremes.dataMin) {
       xOptions.min = min;
+      this.loadHistory(min, extremes.dataMin);
     }
 
     if (max > extremes.dataMax) {
@@ -12692,6 +12696,23 @@ ChartBase.prototype = {
     this.state.xRange = range;
 
     this.state.endSticked = false;
+  },
+
+  loadHistory: function(from, to) {
+    console.log('loadHistory');
+    // TODO: Replace by real data from API
+    var firstY    = this.chart.series[0].yData[0][0] || this.chart.series[0].yData[0],
+        timeSteps = +((to-from)/1000).toFixed(0),
+        history   = [],
+        value;
+        console.log(firstY);
+
+    for (var i = 0; i < timeSteps-2; i++) {
+      value = (0.5 - Math.random())/10000 + firstY;
+      history.push([from + 1000*i, value]);
+    };
+
+    this.setData(history.concat(this.chart.series[0].options.data));
   },
 
   redraw: function() {
@@ -12730,65 +12751,94 @@ ChartCandlestick.prototype._configure = function(options) {
   this.options = _.merge({}, DEFAULT_OPTIONS, CANDLESTICK_OPTIONS);
 },
 
+// ChartCandlestick.prototype.setData = function(data) {
+//   var length = data.length,
+//       candles = [],
+//       curr_candle, tick;
+
+//   this.state.currCandleTime = null;
+
+//   for (var i = 0; i < length; i++) {
+//     tick = data[i];
+//     curr_candle = candles[candles.length - 1] || [];
+
+//     if (this._isCurrCandleActual(tick[0])) {
+//       candles[candles.length - 1] = this._addPointToCandle(curr_candle, tick);
+//     } else {
+//       this.state.currCandleTime = tick[0];
+//       candles.push([tick[0], curr_candle[4] || tick[1], tick[1], tick[1], tick[1]]);
+//     }
+//   }
+
+//   this.chart.series[1].setData(candles, false, false);
+//   this.chart.series[0].setData(candles, true, true);
+//   this.updateLastTick();
+
+//   return this;
+// };
+
+// ChartCandlestick.prototype.addPoint = function(tick) {
+//   var point;
+//   candles       = this.chart.series[0].data,
+//   candles_nav   = this.chart.series[1].data,
+//   candles_y     = this.chart.series[0].yData,
+//   curr_candle   = candles[candles.length - 1],
+//   curr_candle_nav = candles_nav[candles.length - 1],
+//   curr_candle_y = candles_y[candles_y.length - 1] || [];
+
+//   if (this._isCurrCandleActual(tick[0])) {
+//     point     = this._addPointToCandle([curr_candle.x].concat(curr_candle_y), tick);
+
+//     curr_candle_nav.update(point, true, true);
+//     curr_candle.update(point, true, true);
+//   } else {
+//     this.state.currCandleTime = tick[0];
+//     point = [tick[0], curr_candle_y[3] || tick[1], tick[1], tick[1], tick[1]];
+//     this.chart.series[1].addPoint(point, true, true);
+//     this.chart.series[0].addPoint(point, true, true);
+//   }
+
+//   this.updateLastTick();
+
+//   return this;
+// };
+
+ChartCandlestick.prototype._initialize = function() {
+  this.constructor.__supper__._initialize.apply(this);
+
+  this.state.lastCandleClose = 0;
+};
+
+ChartCandlestick.prototype.addPoint = function(tick) {
+  this.chart.series[1].addPoint(tick, false, false);
+  this.chart.series[0].addPoint([tick[0], this.state.lastCandleClose, tick[1], tick[1], tick[1]], true, true);
+  this.state.lastCandleClose = tick[1];
+  this.updateLastTick();
+};
+
 ChartCandlestick.prototype.setData = function(data) {
-  var length = data.length,
-      candles = [],
-      curr_candle, tick;
+  var self = this;
 
-  this.state.currCandleTime = null;
+  var candles = data.map(function(tick) {
+    var open = self.state.lastCandleClose || tick[1];
 
-  for (var i = 0; i < length; i++) {
-    tick = data[i];
-    curr_candle = candles[candles.length - 1] || [];
-
-    if (this._isCurrCandleActual(tick[0])) {
-      candles[candles.length - 1] = this._addPointToCandle(curr_candle, tick);
-    } else {
-      this.state.currCandleTime = tick[0];
-      candles.push([tick[0], curr_candle[4] || tick[1], tick[1], tick[1], tick[1]]);
-    }
-  }
-
-  this.chart.series[1].setData(candles, false, false);
+    self.state.lastCandleClose = tick[1];
+    return [tick[0], open, tick[1], tick[1], tick[1]];
+  });
+  this.chart.series[1].setData(data, false, false);
   this.chart.series[0].setData(candles, true, true);
   this.updateLastTick();
 
   return this;
 };
 
-ChartCandlestick.prototype.addPoint = function(tick) {
-  var point;
-  candles       = this.chart.series[0].data,
-  candles_nav   = this.chart.series[1].data,
-  candles_y     = this.chart.series[0].yData,
-  curr_candle   = candles[candles.length - 1],
-  curr_candle_nav = candles_nav[candles.length - 1],
-  curr_candle_y = candles_y[candles_y.length - 1] || [];
+// ChartCandlestick.prototype._isCurrCandleActual = function(time) {
+//   return this.state.currCandleTime && time <= this.state.currCandleTime + CONFIG.CHART.SECONDS_IN_CANDLE;
+// };
 
-  if (this._isCurrCandleActual(tick[0])) {
-    point     = this._addPointToCandle([curr_candle.x].concat(curr_candle_y), tick);
-
-    curr_candle_nav.update(point, true, true);
-    curr_candle.update(point, true, true);
-  } else {
-    this.state.currCandleTime = tick[0];
-    point = [tick[0], curr_candle_y[3] || tick[1], tick[1], tick[1], tick[1]];
-    this.chart.series[1].addPoint(point, true, true);
-    this.chart.series[0].addPoint(point, true, true);
-  }
-
-  this.updateLastTick();
-
-  return this;
-};
-
-ChartCandlestick.prototype._isCurrCandleActual = function(time) {
-  return this.state.currCandleTime && time <= this.state.currCandleTime + CONFIG.CHART.SECONDS_IN_CANDLE;
-};
-
-ChartCandlestick.prototype._addPointToCandle = function(candle, tick) {
-  return [candle[0], candle[1], Math.max(candle[2], tick[1]), Math.min(candle[3], tick[1]), tick[1]];
-};
+// ChartCandlestick.prototype._addPointToCandle = function(candle, tick) {
+//   return [candle[0], candle[1], Math.max(candle[2], tick[1]), Math.min(candle[3], tick[1]), tick[1]];
+// };
 
 module.exports = ChartCandlestick;
 
