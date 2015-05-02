@@ -9,16 +9,18 @@ var interact            = require("./../../vendor/interact/interact.js");
 var ChartBase           = require('./ChartBase.js');
 var ChartCandlestick    = require('./ChartCandlestick.js');
 
-var VIEW_MODES = ['area', 'candlestick', 'split'];
+var VIEW_MODES = ['area', 'candlestick', 'split', 'split-full'];
 
 var Charts = function(options) {
   options = options || {};
 
   this._configure(options);
-  this.render();
+  this._render();
 };
 
 Charts.prototype = {
+  // Private methods
+
   _configure: function(options) {
     if (!options.el) {
       throw new Error('`el` option must be passed to new Charts().');
@@ -32,7 +34,7 @@ Charts.prototype = {
     this.$el.css({position: 'relative'});
   },
 
-  render: function() {
+  _render: function() {
     var self = this;
 
     this.$el.html(template()).ready(function() {
@@ -42,18 +44,20 @@ Charts.prototype = {
       self.$resize      = self.$el.find('.b-embd-chart__split-resize');
       self.$menuItems   = self.$el.find('.b-embd-chart__menu li');
       self.$valueLine   = self.$el.find('.b-embd-chart__value');
-      self.$valueLineDelta = self.$el.find('.b-embd-chart__value__t');
-      self.$timer          = self.$el.find('.b-embd-chart__timer');
+      self.$prediction  = self.$valueLine.find('.prediction');
+      self.$timer       = self.$el.find('.b-embd-chart__timer');
+      self.$timerValue  = self.$el.find('.b-embd-chart__timer__value');
+      self.$scrollPanel  = self.$el.find('.b-embd-chart__scroll-panel');
+      self.$rangePresets = self.$el.find('.b-embd-chart__ranges li');
 
       self._initialize();
     });
   },
 
   _initialize: function() {
-    var self = this,
-        x = 0;
+    var self = this;
 
-    _.bindAll(this, '_onChangeViewMode', '_onResizeHandleDrag', '_timerTick', '_onSocketPush', '_onSocketOpen', '_childGraphOnReady');
+    _.bindAll(this, '_onChangeViewMode', '_onResizeHandleDrag', '_timerTick', '_onSocketPush', '_onSocketOpen', '_childGraphOnReady', '_applyRangePreset', 'zoomIn', 'zoomOut', 'scrollToEnd', 'scrollLeft', 'scrollRight');
 
     this.area        = new ChartBase({el: this.$area[0]});
     this.candlestick = new ChartCandlestick({el: this.$candlestick[0]});
@@ -64,15 +68,39 @@ Charts.prototype = {
       timer: null
     };
 
+    this.on('changeViewMode', this._onChangeViewMode);
+
     this.area.$el.on('ready', this._childGraphOnReady);
     this.candlestick.$el.on('ready', this._childGraphOnReady);
 
     this.$menuItems.on('click', function() { self.viewMode($(this).attr('mode')) });
-    this.$root.on('changeViewMode', this._onChangeViewMode);
+    this.$scrollPanel.find('.scrollToEnd').on('click', this.scrollToEnd);
+    this.$scrollPanel.find('.scrollLeft').on('click', this.scrollLeft);
+    this.$scrollPanel.find('.scrollRight').on('click', this.scrollRight);
+    this.$scrollPanel.find('.zoomIn').on('click', this.zoomIn);
+    this.$scrollPanel.find('.zoomOut').on('click', this.zoomOut);
+    this.$rangePresets.on('click', this._applyRangePreset);
+
+    this.area.on('setExtremes', function(e, extremes) {
+      self._checkRangePresets(extremes.max-extremes.min);
+      self._syncGraphsPositions(self.area, self.candlestick, extremes);
+    });
+
+    this.candlestick.on('setExtremes', function(e, extremes) {
+      self._syncGraphsPositions(self.candlestick, self.area, extremes);
+    });
 
     interact(this.$resize[0])
       .draggable(_.merge({}, CONFIG.INTERACT.DRAGGABLE, {restrict: {restriction: this.$resize[0].parentNode}}))
       .on('dragmove', this._onResizeHandleDrag);
+
+    this.$el.bind('mousewheel', function(e){
+      if(e.originalEvent.wheelDelta /120 > 0) {
+        self.zoomIn();
+      } else {
+        self.zoomOut();
+      }
+    });
   },
 
   _childGraphOnReady: function() {
@@ -107,12 +135,8 @@ Charts.prototype = {
     event.target.style.webkitTransform = event.target.style.transform = 'translate(' + this.state.splitHandleX + 'px, 0px)';
   },
 
-  _fireEvent: function(name, params) {
-    this.$root.trigger.apply(this.$root, arguments);
-  },
-
   _onChangeViewMode: function(event, mode) {
-    var is_split = (mode == 'split');
+    var is_split = (mode == 'split') || (mode == 'split-full');
     var delta    = this.state.splitDelta;
 
     if (is_split) {
@@ -125,6 +149,94 @@ Charts.prototype = {
     }
 
     this.area.chart.yAxis[0].update({labels: {enabled: !is_split}});
+    this._updateValue();
+  },
+
+  _onSocketPush: function(event) {
+    var data = JSON.parse(event.data);
+    var tick = data[this.options.name];
+
+    this.addPoint([+tick.created_at*1000, +tick.rate]);
+  },
+
+  _onSocketOpen: function(event) {
+    this.state.socket.send('subscribe:' + this.options.name);
+  },
+
+  _updateYRange: function(tick) {
+    this.area._updateYRange(tick);
+    this.candlestick._updateYRange(tick);
+  },
+
+  _timerTick: function() {
+    var timeToEnd       = this.state.dealEndTime - new Date().getTime(),
+        timeToEndString = moment(timeToEnd).utcOffset(0).format("HH:mm:ss");
+
+    if (timeToEnd < 0) {
+      return this.clearTimer();
+    }
+
+    this.$timer.toggleClass('flash', timeToEnd < CONFIG.CHART.TIMER_ACTIVE_BORDER);
+    this.$timerValue.text(timeToEndString);
+  },
+
+  _updateValue: function() {
+    var y_data     = this.area.chart.series[0].yData,
+        curr_value = y_data[y_data.length-1],
+        valueTop   = this.candlestick.chart.yAxis[0].toPixels(curr_value);
+
+    this.$valueLine
+      .css({top: valueTop + 'px'});
+
+    return this;
+  },
+
+  _applyRangePreset: function(evt) {
+    var el = $(evt.target),
+        range = CONFIG.CHART.RANGE_PRESETS[el.attr('data-range')];
+
+    this._cancelRangePresets();
+    el.addClass('active');
+
+    this.setRange(range);
+  },
+
+  _cancelRangePresets: function() {
+    this.$rangePresets.removeClass('active');
+  },
+
+  _checkRangePresets: function(range) {
+    var preset = _.findKey(CONFIG.CHART.RANGE_PRESETS, function(item) {
+      return item == range;
+    });
+
+    this._cancelRangePresets();
+
+    if (preset) {
+      this.$rangePresets.filter('[data-range="' + preset + '"]').addClass('active');
+    }
+  },
+
+  _getXrange: function() {
+    return this.area.state.xRange || this.candlestick.state.xRange;
+  },
+
+  _syncGraphsPositions: function(baseGraph, syncedGraph, extremes) {
+    if (extremes.trigger) {
+      syncedGraph.xSet({min: baseGraph.xGet('min'), max: baseGraph.xGet('max')});
+      syncedGraph.chart.xAxis[0].setExtremes(extremes.min, extremes.max, true, true);
+      this._updateValue();
+    }
+  },
+
+  // Public methods
+
+  on: function(name, callback) {
+    this.$el.on.apply(this.$root, arguments);
+  },
+
+  emit: function(name, params) {
+    this.$el.trigger.apply(this.$root, arguments);
   },
 
   onReady: function(callback) {
@@ -141,7 +253,7 @@ Charts.prototype = {
       .addClass(mode);
 
     this.reflow();
-    this._fireEvent('changeViewMode', mode);
+    this.emit('changeViewMode', mode);
 
     return this;
   },
@@ -149,7 +261,7 @@ Charts.prototype = {
   addPoint: function(tick) {
     this.area.addPoint(tick);
     this.candlestick.addPoint(tick);
-    this.updateValue();
+    this._updateValue();
 
     return this;
   },
@@ -157,7 +269,7 @@ Charts.prototype = {
   setData: function(data) {
     this.area.setData(data);
     this.candlestick.setData(data);
-    this.updateValue();
+    this._updateValue();
 
     return this;
   },
@@ -179,17 +291,6 @@ Charts.prototype = {
     return this;
   },
 
-  _onSocketPush: function(event) {
-    var data = JSON.parse(event.data);
-    var tick = data[this.options.name];
-
-    this.addPoint([+tick.created_at*1000, +tick.rate]);
-  },
-
-  _onSocketOpen: function(event) {
-    this.state.socket.send('subscribe:' + this.options.name);
-  },
-
   xSet: function(options, redraw) {
     this.area.xSet.apply(this.area, arguments);
     this.candlestick.xSet.apply(this.candlestick, arguments);
@@ -204,9 +305,40 @@ Charts.prototype = {
     return this;
   },
 
-  _updateYRange: function(tick) {
-    this.area._updateYRange(tick);
-    this.candlestick._updateYRange(tick);
+  setRange: function(range) {
+    this.area.setRange(range);
+    this.candlestick.setRange(range);
+
+    return this;
+  },
+
+  scrollLeft: function() {
+    this.area.scrollLeft();
+    this.candlestick.scrollLeft();
+
+    return this;
+  },
+
+  scrollRight: function() {
+    this.area.scrollRight();
+    this.candlestick.scrollRight();
+
+    return this;
+  },
+
+  zoomIn: function() {
+    this.setRange(this._getXrange()/CONFIG.CHART.ZOOM_COEF);
+  },
+
+  zoomOut: function() {
+    this.setRange(this._getXrange()*CONFIG.CHART.ZOOM_COEF);
+  },
+
+  scrollToEnd: function() {
+    this.area.scrollToEnd();
+    this.candlestick.scrollToEnd();
+
+    return this;
   },
 
   setTimer: function(time) {
@@ -215,32 +347,23 @@ Charts.prototype = {
 
     this.state.dealEndTime = time;
 
-    clearInterval(this.state.timer);
+    this.clearTimer();
     this.state.timer = setInterval(this._timerTick, 1000);
+    this.$timer.addClass('active');
+
+    return this;
   },
 
-  _timerTick: function() {
-    var now       = new Date().getTime(),
-        timeToEnd = moment(this.state.dealEndTime).subtract(now).utcOffset(0).format("HH:mm:ss");
+  clearTimer: function(time) {
+    clearInterval(this.state.timer);
+    this.$timer.removeClass('active');
 
-
-
-    this.$timer.text(timeToEnd);
+    return this;
   },
 
-  updateValue: function() {
-    var y_data     = this.area.chart.series[0].yData,
-        curr_value = y_data[y_data.length-1],
-        prev_value = y_data[y_data.length-2] || curr_value,
-        isUp       = (curr_value >= prev_value),
-        valueTop   = this.area.chart.yAxis[0].toPixels(curr_value),
-        delta      = isUp ? (curr_value - prev_value)/prev_value : (prev_value - curr_value)/curr_value;
-
-    this.$valueLine
-      .css({top: valueTop + 'px'})
-      .toggleClass('up', isUp);
-
-    this.$valueLineDelta.text((delta * 100).toFixed(2) + '%');
+  setPrediction: function(percents, isUp) {
+    this.$prediction.text(percents.toFixed(0) + '%');
+    this.$valueLine.toggleClass('up', isUp);
 
     return this;
   },
@@ -260,14 +383,14 @@ Charts.prototype = {
 
 window.Charts = Charts;
 
-},{"../../vendor/highstock-release/highstock.src.js":"/Users/akrasman/github/binomo/graphs/vendor/highstock-release/highstock.src.js","../config/config.js":"/Users/akrasman/github/binomo/graphs/src/config/config.js","../templates/graphs.html":"/Users/akrasman/github/binomo/graphs/src/templates/graphs.html","./../../vendor/interact/interact.js":"/Users/akrasman/github/binomo/graphs/vendor/interact/interact.js","./../../vendor/lodash/lodash.js":"/Users/akrasman/github/binomo/graphs/vendor/lodash/lodash.js","./../../vendor/moment/moment.js":"/Users/akrasman/github/binomo/graphs/vendor/moment/moment.js","./ChartBase.js":"/Users/akrasman/github/binomo/graphs/src/js/ChartBase.js","./ChartCandlestick.js":"/Users/akrasman/github/binomo/graphs/src/js/ChartCandlestick.js"}],"/Users/akrasman/github/binomo/graphs/node_modules/lodash/index.js":[function(require,module,exports){
+},{"../../vendor/highstock-release/highstock.src.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/vendor/highstock-release/highstock.src.js","../config/config.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/config/config.js","../templates/graphs.html":"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/templates/graphs.html","./../../vendor/interact/interact.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/vendor/interact/interact.js","./../../vendor/lodash/lodash.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/vendor/lodash/lodash.js","./../../vendor/moment/moment.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/vendor/moment/moment.js","./ChartBase.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/js/ChartBase.js","./ChartCandlestick.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/js/ChartCandlestick.js"}],"/Users/akrasman/Dropbox/Projects/binomo/graphs/node_modules/lodash/index.js":[function(require,module,exports){
 (function (global){
 /**
  * @license
- * lodash 3.7.0 (Custom Build) <https://lodash.com/>
+ * lodash 3.6.0 (Custom Build) <https://lodash.com/>
  * Build: `lodash modern -d -o ./index.js`
  * Copyright 2012-2015 The Dojo Foundation <http://dojofoundation.org/>
- * Based on Underscore.js 1.8.3 <http://underscorejs.org/LICENSE>
+ * Based on Underscore.js 1.8.2 <http://underscorejs.org/LICENSE>
  * Copyright 2009-2015 Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
  * Available under MIT license <https://lodash.com/license>
  */
@@ -277,7 +400,7 @@ window.Charts = Charts;
   var undefined;
 
   /** Used as the semantic version number. */
-  var VERSION = '3.7.0';
+  var VERSION = '3.6.0';
 
   /** Used to compose bitmasks for wrapper metadata. */
   var BIND_FLAG = 1,
@@ -351,10 +474,30 @@ window.Charts = Charts;
       reEvaluate = /<%([\s\S]+?)%>/g,
       reInterpolate = /<%=([\s\S]+?)%>/g;
 
-  /** Used to match property names within property paths. */
-  var reIsDeepProp = /\.|\[(?:[^[\]]+|(["'])(?:(?!\1)[^\n\\]|\\.)*?)\1\]/,
-      reIsPlainProp = /^\w*$/,
-      rePropName = /[^.[\]]+|\[(?:(-?\d+(?:\.\d+)?)|(["'])((?:(?!\2)[^\n\\]|\\.)*?)\2)\]/g;
+  /**
+   * Used to match [combining diacritical marks](https://en.wikipedia.org/wiki/Combining_Diacritical_Marks).
+   */
+  var reComboMarks = /[\u0300-\u036f\ufe20-\ufe23]/g;
+
+  /**
+   * Used to match [ES template delimiters](https://people.mozilla.org/~jorendorff/es6-draft.html#sec-template-literal-lexical-components).
+   */
+  var reEsTemplate = /\$\{([^\\}]*(?:\\.[^\\}]*)*)\}/g;
+
+  /** Used to match `RegExp` flags from their coerced string values. */
+  var reFlags = /\w*$/;
+
+  /** Used to detect hexadecimal string values. */
+  var reHexPrefix = /^0[xX]/;
+
+  /** Used to detect host constructors (Safari > 5). */
+  var reHostCtor = /^\[object .+?Constructor\]$/;
+
+  /** Used to match latin-1 supplementary letters (excluding mathematical operators). */
+  var reLatin1 = /[\xc0-\xd6\xd8-\xde\xdf-\xf6\xf8-\xff]/g;
+
+  /** Used to ensure capturing order of template delimiters. */
+  var reNoMatch = /($^)/;
 
   /**
    * Used to match `RegExp` [special characters](http://www.regular-expressions.info/characters.html#special).
@@ -363,30 +506,6 @@ window.Charts = Charts;
    */
   var reRegExpChars = /[.*+?^${}()|[\]\/\\]/g,
       reHasRegExpChars = RegExp(reRegExpChars.source);
-
-  /** Used to match [combining diacritical marks](https://en.wikipedia.org/wiki/Combining_Diacritical_Marks). */
-  var reComboMark = /[\u0300-\u036f\ufe20-\ufe23]/g;
-
-  /** Used to match backslashes in property paths. */
-  var reEscapeChar = /\\(\\)?/g;
-
-  /** Used to match [ES template delimiters](https://people.mozilla.org/~jorendorff/es6-draft.html#sec-template-literal-lexical-components). */
-  var reEsTemplate = /\$\{([^\\}]*(?:\\.[^\\}]*)*)\}/g;
-
-  /** Used to match `RegExp` flags from their coerced string values. */
-  var reFlags = /\w*$/;
-
-  /** Used to detect hexadecimal string values. */
-  var reHasHexPrefix = /^0[xX]/;
-
-  /** Used to detect host constructors (Safari > 5). */
-  var reIsHostCtor = /^\[object .+?Constructor\]$/;
-
-  /** Used to match latin-1 supplementary letters (excluding mathematical operators). */
-  var reLatin1 = /[\xc0-\xd6\xd8-\xde\xdf-\xf6\xf8-\xff]/g;
-
-  /** Used to ensure capturing order of template delimiters. */
-  var reNoMatch = /($^)/;
 
   /** Used to match unescaped characters in compiled string literals. */
   var reUnescapedString = /['\n\r\u2028\u2029\\]/g;
@@ -525,7 +644,7 @@ window.Charts = Charts;
   var freeModule = objectTypes[typeof module] && module && !module.nodeType && module;
 
   /** Detect free variable `global` from Node.js. */
-  var freeGlobal = freeExports && freeModule && typeof global == 'object' && global && global.Object && global;
+  var freeGlobal = freeExports && freeModule && typeof global == 'object' && global;
 
   /** Detect free variable `self`. */
   var freeSelf = objectTypes[typeof self] && self && self.Object && self;
@@ -560,10 +679,10 @@ window.Charts = Charts;
       var valIsReflexive = value === value,
           othIsReflexive = other === other;
 
-      if (value > other || !valIsReflexive || (value === undefined && othIsReflexive)) {
+      if (value > other || !valIsReflexive || (typeof value == 'undefined' && othIsReflexive)) {
         return 1;
       }
-      if (value < other || !othIsReflexive || (other === undefined && valIsReflexive)) {
+      if (value < other || !othIsReflexive || (typeof other == 'undefined' && valIsReflexive)) {
         return -1;
       }
     }
@@ -706,7 +825,7 @@ window.Charts = Charts;
    * Used by `_.sortByOrder` to compare multiple properties of each element
    * in a collection and stable sort them in the following order:
    *
-   * If `orders` is unspecified, sort in ascending order for all properties.
+   * If orders is unspecified, sort in ascending order for all properties.
    * Otherwise, for each property, sort in ascending order if its corresponding value in
    * orders is true, and descending order if false.
    *
@@ -983,6 +1102,9 @@ window.Charts = Charts;
     /** Used to resolve the decompiled source of functions. */
     var fnToString = Function.prototype.toString;
 
+    /** Used to the length of n-tuples for `_.unzip`. */
+    var getLength = baseProperty('length');
+
     /** Used to check objects for own properties. */
     var hasOwnProperty = objectProto.hasOwnProperty;
 
@@ -999,7 +1121,7 @@ window.Charts = Charts;
     var oldDash = context._;
 
     /** Used to detect if a method is native. */
-    var reIsNative = RegExp('^' +
+    var reNative = RegExp('^' +
       escapeRegExp(objToString)
       .replace(/toString|(function).*?(?=\\\()| for .+?(?=\\\])/g, '$1.*?') + '$'
     );
@@ -1010,10 +1132,8 @@ window.Charts = Charts;
         ceil = Math.ceil,
         clearTimeout = context.clearTimeout,
         floor = Math.floor,
-        getOwnPropertySymbols = isNative(getOwnPropertySymbols = Object.getOwnPropertySymbols) && getOwnPropertySymbols,
         getPrototypeOf = isNative(getPrototypeOf = Object.getPrototypeOf) && getPrototypeOf,
         push = arrayProto.push,
-        preventExtensions = isNative(Object.preventExtensions = Object.preventExtensions) && preventExtensions,
         propertyIsEnumerable = objectProto.propertyIsEnumerable,
         Set = isNative(Set = context.Set) && Set,
         setTimeout = context.setTimeout,
@@ -1031,22 +1151,6 @@ window.Charts = Charts;
             result = new func(new ArrayBuffer(10), 0, 1) && func;
       } catch(e) {}
       return result;
-    }());
-
-    /** Used as `baseAssign`. */
-    var nativeAssign = (function() {
-      // Avoid `Object.assign` in Firefox 34-37 which have an early implementation
-      // with a now defunct try/catch behavior. See https://bugzilla.mozilla.org/show_bug.cgi?id=1103344
-      // for more details.
-      //
-      // Use `Object.preventExtensions` on a plain object instead of simply using
-      // `Object('x')` because Chrome and IE fail to throw an error when attempting
-      // to assign values to readonly indexes of strings in strict mode.
-      var object = { '1': 0 },
-          func = preventExtensions && isNative(func = Object.assign) && func;
-
-      try { func(preventExtensions(object), 'xo'); } catch(e) {}
-      return !object[1] && func;
     }());
 
     /* Native method references for those with the same name as other `lodash` methods. */
@@ -1126,8 +1230,8 @@ window.Charts = Charts;
      * `filter`, `flatten`, `flattenDeep`, `flow`, `flowRight`, `forEach`,
      * `forEachRight`, `forIn`, `forInRight`, `forOwn`, `forOwnRight`, `functions`,
      * `groupBy`, `indexBy`, `initial`, `intersection`, `invert`, `invoke`, `keys`,
-     * `keysIn`, `map`, `mapValues`, `matches`, `matchesProperty`, `memoize`,
-     * `merge`, `mixin`, `negate`, `omit`, `once`, `pairs`, `partial`, `partialRight`,
+     * `keysIn`, `map`, `mapValues`, `matches`, `matchesProperty`, `memoize`, `merge`,
+     * `mixin`, `negate`, `noop`, `omit`, `once`, `pairs`, `partial`, `partialRight`,
      * `partition`, `pick`, `plant`, `pluck`, `property`, `propertyOf`, `pull`,
      * `pullAt`, `push`, `range`, `rearg`, `reject`, `remove`, `rest`, `reverse`,
      * `shuffle`, `slice`, `sort`, `sortBy`, `sortByAll`, `sortByOrder`, `splice`,
@@ -1141,15 +1245,15 @@ window.Charts = Charts;
      * `endsWith`, `escape`, `escapeRegExp`, `every`, `find`, `findIndex`, `findKey`,
      * `findLast`, `findLastIndex`, `findLastKey`, `findWhere`, `first`, `has`,
      * `identity`, `includes`, `indexOf`, `inRange`, `isArguments`, `isArray`,
-     * `isBoolean`, `isDate`, `isElement`, `isEmpty`, `isEqual`, `isError`, `isFinite`
-     * `isFunction`, `isMatch`, `isNative`, `isNaN`, `isNull`, `isNumber`, `isObject`,
-     * `isPlainObject`, `isRegExp`, `isString`, `isUndefined`, `isTypedArray`,
-     * `join`, `kebabCase`, `last`, `lastIndexOf`, `max`, `min`, `noConflict`,
-     * `noop`, `now`, `pad`, `padLeft`, `padRight`, `parseInt`, `pop`, `random`,
-     * `reduce`, `reduceRight`, `repeat`, `result`, `runInContext`, `shift`, `size`,
-     * `snakeCase`, `some`, `sortedIndex`, `sortedLastIndex`, `startCase`, `startsWith`,
-     * `sum`, `template`, `trim`, `trimLeft`, `trimRight`, `trunc`, `unescape`,
-     * `uniqueId`, `value`, and `words`
+     * `isBoolean`, `isDate`, `isElement`, `isEmpty`, `isEqual`, `isError`,
+     * `isFinite`,`isFunction`, `isMatch`, `isNative`, `isNaN`, `isNull`, `isNumber`,
+     * `isObject`, `isPlainObject`, `isRegExp`, `isString`, `isUndefined`,
+     * `isTypedArray`, `join`, `kebabCase`, `last`, `lastIndexOf`, `max`, `min`,
+     * `noConflict`, `now`, `pad`, `padLeft`, `padRight`, `parseInt`, `pop`,
+     * `random`, `reduce`, `reduceRight`, `repeat`, `result`, `runInContext`,
+     * `shift`, `size`, `snakeCase`, `some`, `sortedIndex`, `sortedLastIndex`,
+     * `startCase`, `startsWith`, `sum`, `template`, `trim`, `trimLeft`,
+     * `trimRight`, `trunc`, `unescape`, `uniqueId`, `value`, and `words`
      *
      * The wrapper method `sample` will return a wrapped value when `n` is provided,
      * otherwise an unwrapped value is returned.
@@ -1164,8 +1268,8 @@ window.Charts = Charts;
      * var wrapped = _([1, 2, 3]);
      *
      * // returns an unwrapped value
-     * wrapped.reduce(function(total, n) {
-     *   return total + n;
+     * wrapped.reduce(function(sum, n) {
+     *   return sum + n;
      * });
      * // => 6
      *
@@ -1225,12 +1329,6 @@ window.Charts = Charts;
     var support = lodash.support = {};
 
     (function(x) {
-      var Ctor = function() { this.x = x; },
-          object = { '0': x, 'length': x },
-          props = [];
-
-      Ctor.prototype = { 'valueOf': x, 'y': x };
-      for (var key in new Ctor) { props.push(key); }
 
       /**
        * Detect if functions can be decompiled by `Function#toString`
@@ -1268,8 +1366,8 @@ window.Charts = Charts;
        * In Firefox < 4, IE < 9, PhantomJS, and Safari < 5.1 `arguments` object
        * indexes are non-enumerable. Chrome < 25 and Node.js < 0.11.0 treat
        * `arguments` object indexes as non-enumerable and fail `hasOwnProperty`
-       * checks for indexes that exceed the number of function parameters and
-       * whose associated argument values are `0`.
+       * checks for indexes that exceed their function's formal parameters with
+       * associated values of `0`.
        *
        * @memberOf _.support
        * @type boolean
@@ -1279,7 +1377,7 @@ window.Charts = Charts;
       } catch(e) {
         support.nonEnumArgs = true;
       }
-    }(1, 0));
+    }(0, 0));
 
     /**
      * By default, the template delimiters used by lodash are like those in
@@ -1526,7 +1624,7 @@ window.Charts = Charts;
     }
 
     /**
-     * Sets `value` to `key` of the cache.
+     * Adds `value` to `key` of the cache.
      *
      * @private
      * @name set
@@ -1859,13 +1957,13 @@ window.Charts = Charts;
      * @returns {*} Returns the value to assign to the destination object.
      */
     function assignDefaults(objectValue, sourceValue) {
-      return objectValue === undefined ? sourceValue : objectValue;
+      return typeof objectValue == 'undefined' ? sourceValue : objectValue;
     }
 
     /**
      * Used by `_.template` to customize its `_.assign` use.
      *
-     * **Note:** This function is like `assignDefaults` except that it ignores
+     * **Note:** This method is like `assignDefaults` except that it ignores
      * inherited property values when checking if a property is `undefined`.
      *
      * @private
@@ -1876,26 +1974,26 @@ window.Charts = Charts;
      * @returns {*} Returns the value to assign to the destination object.
      */
     function assignOwnDefaults(objectValue, sourceValue, key, object) {
-      return (objectValue === undefined || !hasOwnProperty.call(object, key))
+      return (typeof objectValue == 'undefined' || !hasOwnProperty.call(object, key))
         ? sourceValue
         : objectValue;
     }
 
     /**
-     * A specialized version of `_.assign` for customizing assigned values without
-     * support for argument juggling, multiple sources, and `this` binding `customizer`
-     * functions.
+     * The base implementation of `_.assign` without support for argument juggling,
+     * multiple sources, and `this` binding `customizer` functions.
      *
      * @private
      * @param {Object} object The destination object.
      * @param {Object} source The source object.
-     * @param {Function} customizer The function to customize assigned values.
-     * @returns {Object} Returns `object`.
+     * @param {Function} [customizer] The function to customize assigning values.
+     * @returns {Object} Returns the destination object.
      */
-    function assignWith(object, source, customizer) {
+    function baseAssign(object, source, customizer) {
       var props = keys(source);
-      push.apply(props, getSymbols(source));
-
+      if (!customizer) {
+        return baseCopy(source, object, props);
+      }
       var index = -1,
           length = props.length;
 
@@ -1905,7 +2003,7 @@ window.Charts = Charts;
             result = customizer(value, source[key], key, object, source);
 
         if ((result === result ? (result !== value) : (value === value)) ||
-            (value === undefined && !(key in object))) {
+            (typeof value == 'undefined' && !(key in object))) {
           object[key] = result;
         }
       }
@@ -1913,27 +2011,12 @@ window.Charts = Charts;
     }
 
     /**
-     * The base implementation of `_.assign` without support for argument juggling,
-     * multiple sources, and `customizer` functions.
-     *
-     * @private
-     * @param {Object} object The destination object.
-     * @param {Object} source The source object.
-     * @returns {Object} Returns `object`.
-     */
-    var baseAssign = nativeAssign || function(object, source) {
-      return source == null
-        ? object
-        : baseCopy(source, getSymbols(source), baseCopy(source, keys(source), object));
-    };
-
-    /**
-     * The base implementation of `_.at` without support for string collections
-     * and individual key arguments.
+     * The base implementation of `_.at` without support for strings and individual
+     * key arguments.
      *
      * @private
      * @param {Array|Object} collection The collection to iterate over.
-     * @param {number[]|string[]} props The property names or indexes of elements to pick.
+     * @param {number[]|string[]} [props] The property names or indexes of elements to pick.
      * @returns {Array} Returns the new array of picked elements.
      */
     function baseAt(collection, props) {
@@ -1946,6 +2029,7 @@ window.Charts = Charts;
       while(++index < propsLength) {
         var key = props[index];
         if (isArr) {
+          key = parseFloat(key);
           result[index] = isIndex(key, length) ? collection[key] : undefined;
         } else {
           result[index] = collection[key];
@@ -1955,17 +2039,19 @@ window.Charts = Charts;
     }
 
     /**
-     * Copies properties of `source` to `object`.
+     * Copies the properties of `source` to `object`.
      *
      * @private
      * @param {Object} source The object to copy properties from.
-     * @param {Array} props The property names to copy.
      * @param {Object} [object={}] The object to copy properties to.
+     * @param {Array} props The property names to copy.
      * @returns {Object} Returns `object`.
      */
-    function baseCopy(source, props, object) {
-      object || (object = {});
-
+    function baseCopy(source, object, props) {
+      if (!props) {
+        props = object;
+        object = {};
+      }
       var index = -1,
           length = props.length;
 
@@ -1989,7 +2075,7 @@ window.Charts = Charts;
     function baseCallback(func, thisArg, argCount) {
       var type = typeof func;
       if (type == 'function') {
-        return thisArg === undefined
+        return typeof thisArg == 'undefined'
           ? func
           : bindCallback(func, thisArg, argCount);
       }
@@ -1999,9 +2085,9 @@ window.Charts = Charts;
       if (type == 'object') {
         return baseMatches(func);
       }
-      return thisArg === undefined
-        ? property(func)
-        : baseMatchesProperty(func, thisArg);
+      return typeof thisArg == 'undefined'
+        ? baseProperty(func + '')
+        : baseMatchesProperty(func + '', thisArg);
     }
 
     /**
@@ -2023,7 +2109,7 @@ window.Charts = Charts;
       if (customizer) {
         result = object ? customizer(value, key, object) : customizer(value);
       }
-      if (result !== undefined) {
+      if (typeof result != 'undefined') {
         return result;
       }
       if (!isObject(value)) {
@@ -2042,7 +2128,7 @@ window.Charts = Charts;
         if (tag == objectTag || tag == argsTag || (isFunc && !object)) {
           result = initCloneObject(isFunc ? {} : value);
           if (!isDeep) {
-            return baseAssign(result, value);
+            return baseCopy(value, result, keys(value));
           }
         } else {
           return cloneableTags[tag]
@@ -2213,7 +2299,7 @@ window.Charts = Charts;
       if (start < 0) {
         start = -start > length ? 0 : (length + start);
       }
-      end = (end === undefined || end > length) ? length : (+end || 0);
+      end = (typeof end == 'undefined' || end > length) ? length : (+end || 0);
       if (end < 0) {
         end += length;
       }
@@ -2310,7 +2396,7 @@ window.Charts = Charts;
     /**
      * The base implementation of `baseForIn` and `baseForOwn` which iterates
      * over `object` properties returned by `keysFunc` invoking `iteratee` for
-     * each property. Iteratee functions may exit iteration early by explicitly
+     * each property. Iterator functions may exit iteration early by explicitly
      * returning `false`.
      *
      * @private
@@ -2397,32 +2483,6 @@ window.Charts = Charts;
     }
 
     /**
-     * The base implementation of `get` without support for string paths
-     * and default values.
-     *
-     * @private
-     * @param {Object} object The object to query.
-     * @param {Array} path The path of the property to get.
-     * @param {string} [pathKey] The key representation of path.
-     * @returns {*} Returns the resolved value.
-     */
-    function baseGet(object, path, pathKey) {
-      if (object == null) {
-        return;
-      }
-      if (pathKey !== undefined && pathKey in toObject(object)) {
-        path = [pathKey];
-      }
-      var index = -1,
-          length = path.length;
-
-      while (object != null && ++index < length) {
-        var result = object = object[path[index]];
-      }
-      return result;
-    }
-
-    /**
      * The base implementation of `_.isEqual` without support for `this` binding
      * `customizer` functions.
      *
@@ -2490,23 +2550,27 @@ window.Charts = Charts;
           othIsArr = isTypedArray(other);
         }
       }
-      var objIsObj = objTag == objectTag,
-          othIsObj = othTag == objectTag,
+      var objIsObj = (objTag == objectTag || (isLoose && objTag == funcTag)),
+          othIsObj = (othTag == objectTag || (isLoose && othTag == funcTag)),
           isSameTag = objTag == othTag;
 
       if (isSameTag && !(objIsArr || objIsObj)) {
         return equalByTag(object, other, objTag);
       }
-      if (!isLoose) {
+      if (isLoose) {
+        if (!isSameTag && !(objIsObj && othIsObj)) {
+          return false;
+        }
+      } else {
         var valWrapped = objIsObj && hasOwnProperty.call(object, '__wrapped__'),
             othWrapped = othIsObj && hasOwnProperty.call(other, '__wrapped__');
 
         if (valWrapped || othWrapped) {
           return equalFunc(valWrapped ? object.value() : object, othWrapped ? other.value() : other, customizer, isLoose, stackA, stackB);
         }
-      }
-      if (!isSameTag) {
-        return false;
+        if (!isSameTag) {
+          return false;
+        }
       }
       // Assume cyclic values are equal.
       // For more information on detecting circular references see https://es5.github.io/#JO.
@@ -2563,10 +2627,10 @@ window.Charts = Charts;
             srcValue = values[index];
 
         if (noCustomizer && strictCompareFlags[index]) {
-          var result = objValue !== undefined || (key in object);
+          var result = typeof objValue != 'undefined' || (key in object);
         } else {
           result = customizer ? customizer(objValue, srcValue, key) : undefined;
-          if (result === undefined) {
+          if (typeof result == 'undefined') {
             result = baseIsEqual(srcValue, objValue, customizer, true);
           }
         }
@@ -2587,12 +2651,9 @@ window.Charts = Charts;
      * @returns {Array} Returns the new mapped array.
      */
     function baseMap(collection, iteratee) {
-      var index = -1,
-          length = getLength(collection),
-          result = isLength(length) ? Array(length) : [];
-
+      var result = [];
       baseEach(collection, function(value, key, collection) {
-        result[++index] = iteratee(value, key, collection);
+        result.push(iteratee(value, key, collection));
       });
       return result;
     }
@@ -2617,10 +2678,8 @@ window.Charts = Charts;
 
         if (isStrictComparable(value)) {
           return function(object) {
-            if (object == null) {
-              return false;
-            }
-            return object[key] === value && (value !== undefined || (key in toObject(object)));
+            return object != null && object[key] === value &&
+              (typeof value != 'undefined' || (key in toObject(object)));
           };
         }
       }
@@ -2638,37 +2697,23 @@ window.Charts = Charts;
     }
 
     /**
-     * The base implementation of `_.matchesProperty` which does not which does
-     * not clone `value`.
+     * The base implementation of `_.matchesProperty` which does not coerce `key`
+     * to a string.
      *
      * @private
-     * @param {string} path The path of the property to get.
+     * @param {string} key The key of the property to get.
      * @param {*} value The value to compare.
      * @returns {Function} Returns the new function.
      */
-    function baseMatchesProperty(path, value) {
-      var isArr = isArray(path),
-          isCommon = isKey(path) && isStrictComparable(value),
-          pathKey = (path + '');
-
-      path = toPath(path);
+    function baseMatchesProperty(key, value) {
+      if (isStrictComparable(value)) {
+        return function(object) {
+          return object != null && object[key] === value &&
+            (typeof value != 'undefined' || (key in toObject(object)));
+        };
+      }
       return function(object) {
-        if (object == null) {
-          return false;
-        }
-        var key = pathKey;
-        object = toObject(object);
-        if ((isArr || !isCommon) && !(key in object)) {
-          object = path.length == 1 ? object : baseGet(object, baseSlice(path, 0, -1));
-          if (object == null) {
-            return false;
-          }
-          key = last(path);
-          object = toObject(object);
-        }
-        return object[key] === value
-          ? (value !== undefined || (key in object))
-          : baseIsEqual(value, object[key], null, true);
+        return object != null && baseIsEqual(value, object[key], null, true);
       };
     }
 
@@ -2682,39 +2727,29 @@ window.Charts = Charts;
      * @param {Function} [customizer] The function to customize merging properties.
      * @param {Array} [stackA=[]] Tracks traversed source objects.
      * @param {Array} [stackB=[]] Associates values with source counterparts.
-     * @returns {Object} Returns `object`.
+     * @returns {Object} Returns the destination object.
      */
     function baseMerge(object, source, customizer, stackA, stackB) {
       if (!isObject(object)) {
         return object;
       }
       var isSrcArr = isLength(source.length) && (isArray(source) || isTypedArray(source));
-      if (!isSrcArr) {
-        var props = keys(source);
-        push.apply(props, getSymbols(source));
-      }
-      arrayEach(props || source, function(srcValue, key) {
-        if (props) {
-          key = srcValue;
-          srcValue = source[key];
-        }
+      (isSrcArr ? arrayEach : baseForOwn)(source, function(srcValue, key, source) {
         if (isObjectLike(srcValue)) {
           stackA || (stackA = []);
           stackB || (stackB = []);
-          baseMergeDeep(object, source, key, baseMerge, customizer, stackA, stackB);
+          return baseMergeDeep(object, source, key, baseMerge, customizer, stackA, stackB);
         }
-        else {
-          var value = object[key],
-              result = customizer ? customizer(value, srcValue, key, object, source) : undefined,
-              isCommon = result === undefined;
+        var value = object[key],
+            result = customizer ? customizer(value, srcValue, key, object, source) : undefined,
+            isCommon = typeof result == 'undefined';
 
-          if (isCommon) {
-            result = srcValue;
-          }
-          if ((isSrcArr || result !== undefined) &&
-              (isCommon || (result === result ? (result !== value) : (value === value)))) {
-            object[key] = result;
-          }
+        if (isCommon) {
+          result = srcValue;
+        }
+        if ((isSrcArr || typeof result != 'undefined') &&
+            (isCommon || (result === result ? (result !== value) : (value === value)))) {
+          object[key] = result;
         }
       });
       return object;
@@ -2747,14 +2782,14 @@ window.Charts = Charts;
       }
       var value = object[key],
           result = customizer ? customizer(value, srcValue, key, object, source) : undefined,
-          isCommon = result === undefined;
+          isCommon = typeof result == 'undefined';
 
       if (isCommon) {
         result = srcValue;
         if (isLength(srcValue.length) && (isArray(srcValue) || isTypedArray(srcValue))) {
           result = isArray(value)
             ? value
-            : (getLength(value) ? arrayCopy(value) : []);
+            : ((value && value.length) ? arrayCopy(value) : []);
         }
         else if (isPlainObject(srcValue) || isArguments(srcValue)) {
           result = isArguments(value)
@@ -2779,7 +2814,7 @@ window.Charts = Charts;
     }
 
     /**
-     * The base implementation of `_.property` without support for deep paths.
+     * The base implementation of `_.property` which does not coerce `key` to a string.
      *
      * @private
      * @param {string} key The key of the property to get.
@@ -2789,42 +2824,6 @@ window.Charts = Charts;
       return function(object) {
         return object == null ? undefined : object[key];
       };
-    }
-
-    /**
-     * A specialized version of `baseProperty` which supports deep paths.
-     *
-     * @private
-     * @param {Array|string} path The path of the property to get.
-     * @returns {Function} Returns the new function.
-     */
-    function basePropertyDeep(path) {
-      var pathKey = (path + '');
-      path = toPath(path);
-      return function(object) {
-        return baseGet(object, path, pathKey);
-      };
-    }
-
-    /**
-     * The base implementation of `_.pullAt` without support for individual
-     * index arguments and capturing the removed elements.
-     *
-     * @private
-     * @param {Array} array The array to modify.
-     * @param {number[]} indexes The indexes of elements to remove.
-     * @returns {Array} Returns `array`.
-     */
-    function basePullAt(array, indexes) {
-      var length = indexes.length;
-      while (length--) {
-        var index = parseFloat(indexes[length]);
-        if (index != previous && isIndex(index)) {
-          var previous = index;
-          splice.call(array, index, 1);
-        }
-      }
-      return array;
     }
 
     /**
@@ -2893,7 +2892,7 @@ window.Charts = Charts;
       if (start < 0) {
         start = -start > length ? 0 : (length + start);
       }
-      end = (end === undefined || end > length) ? length : (+end || 0);
+      end = (typeof end == 'undefined' || end > length) ? length : (+end || 0);
       if (end < 0) {
         end += length;
       }
@@ -2952,19 +2951,23 @@ window.Charts = Charts;
      *
      * @private
      * @param {Array|Object|string} collection The collection to iterate over.
-     * @param {Function[]|Object[]|string[]} iteratees The iteratees to sort by.
-     * @param {boolean[]} orders The sort orders of `iteratees`.
+     * @param {string[]} props The property names to sort by.
+     * @param {boolean[]} orders The sort orders of `props`.
      * @returns {Array} Returns the new sorted array.
      */
-    function baseSortByOrder(collection, iteratees, orders) {
-      var callback = getCallback(),
-          index = -1;
+    function baseSortByOrder(collection, props, orders) {
+      var index = -1,
+          length = collection.length,
+          result = isLength(length) ? Array(length) : [];
 
-      iteratees = arrayMap(iteratees, function(iteratee) { return callback(iteratee); });
+      baseEach(collection, function(value) {
+        var length = props.length,
+            criteria = Array(length);
 
-      var result = baseMap(collection, function(value) {
-        var criteria = arrayMap(iteratees, function(iteratee) { return iteratee(value); });
-        return { 'criteria': criteria, 'index': ++index, 'value': value };
+        while (length--) {
+          criteria[length] = value == null ? undefined : value[props[length]];
+        }
+        result[++index] = { 'criteria': criteria, 'index': index, 'value': value };
       });
 
       return baseSortBy(result, function(object, other) {
@@ -3044,7 +3047,7 @@ window.Charts = Charts;
     /**
      * The base implementation of `_.values` and `_.valuesIn` which creates an
      * array of `object` property values corresponding to the property names
-     * of `props`.
+     * returned by `keysFunc`.
      *
      * @private
      * @param {Object} object The object to query.
@@ -3161,7 +3164,7 @@ window.Charts = Charts;
       var low = 0,
           high = array ? array.length : 0,
           valIsNaN = value !== value,
-          valIsUndef = value === undefined;
+          valIsUndef = typeof value == 'undefined';
 
       while (low < high) {
         var mid = floor((low + high) / 2),
@@ -3171,7 +3174,7 @@ window.Charts = Charts;
         if (valIsNaN) {
           var setLow = isReflexive || retHighest;
         } else if (valIsUndef) {
-          setLow = isReflexive && (retHighest || computed !== undefined);
+          setLow = isReflexive && (retHighest || typeof computed != 'undefined');
         } else {
           setLow = retHighest ? (computed <= value) : (computed < value);
         }
@@ -3198,7 +3201,7 @@ window.Charts = Charts;
       if (typeof func != 'function') {
         return identity;
       }
-      if (thisArg === undefined) {
+      if (typeof thisArg == 'undefined') {
         return func;
       }
       switch (argCount) {
@@ -3358,32 +3361,38 @@ window.Charts = Charts;
      * @returns {Function} Returns the new assigner function.
      */
     function createAssigner(assigner) {
-      return restParam(function(object, sources) {
-        var index = -1,
-            length = object == null ? 0 : sources.length,
-            customizer = length > 2 && sources[length - 2],
-            guard = length > 2 && sources[2],
-            thisArg = length > 1 && sources[length - 1];
+      return function() {
+        var args = arguments,
+            length = args.length,
+            object = args[0];
 
-        if (typeof customizer == 'function') {
+        if (length < 2 || object == null) {
+          return object;
+        }
+        var customizer = args[length - 2],
+            thisArg = args[length - 1],
+            guard = args[3];
+
+        if (length > 3 && typeof customizer == 'function') {
           customizer = bindCallback(customizer, thisArg, 5);
           length -= 2;
         } else {
-          customizer = typeof thisArg == 'function' ? thisArg : null;
+          customizer = (length > 2 && typeof thisArg == 'function') ? thisArg : null;
           length -= (customizer ? 1 : 0);
         }
-        if (guard && isIterateeCall(sources[0], sources[1], guard)) {
-          customizer = length < 3 ? null : customizer;
-          length = 1;
+        if (guard && isIterateeCall(args[1], args[2], guard)) {
+          customizer = length == 3 ? null : customizer;
+          length = 2;
         }
+        var index = 0;
         while (++index < length) {
-          var source = sources[index];
+          var source = args[index];
           if (source) {
             assigner(object, source, customizer);
           }
         }
         return object;
-      });
+      };
     }
 
     /**
@@ -3396,7 +3405,7 @@ window.Charts = Charts;
      */
     function createBaseEach(eachFunc, fromRight) {
       return function(collection, iteratee) {
-        var length = collection ? getLength(collection) : 0;
+        var length = collection ? collection.length : 0;
         if (!isLength(length)) {
           return eachFunc(collection, iteratee);
         }
@@ -3673,7 +3682,7 @@ window.Charts = Charts;
      */
     function createForEach(arrayFunc, eachFunc) {
       return function(collection, iteratee, thisArg) {
-        return (typeof iteratee == 'function' && thisArg === undefined && isArray(collection))
+        return (typeof iteratee == 'function' && typeof thisArg == 'undefined' && isArray(collection))
           ? arrayFunc(collection, iteratee)
           : eachFunc(collection, bindCallback(iteratee, thisArg, 3));
       };
@@ -3688,7 +3697,7 @@ window.Charts = Charts;
      */
     function createForIn(objectFunc) {
       return function(object, iteratee, thisArg) {
-        if (typeof iteratee != 'function' || thisArg !== undefined) {
+        if (typeof iteratee != 'function' || typeof thisArg != 'undefined') {
           iteratee = bindCallback(iteratee, thisArg, 3);
         }
         return objectFunc(object, iteratee, keysIn);
@@ -3704,7 +3713,7 @@ window.Charts = Charts;
      */
     function createForOwn(objectFunc) {
       return function(object, iteratee, thisArg) {
-        if (typeof iteratee != 'function' || thisArg !== undefined) {
+        if (typeof iteratee != 'function' || typeof thisArg != 'undefined') {
           iteratee = bindCallback(iteratee, thisArg, 3);
         }
         return objectFunc(object, iteratee);
@@ -3751,7 +3760,7 @@ window.Charts = Charts;
     function createReduce(arrayFunc, eachFunc) {
       return function(collection, iteratee, accumulator, thisArg) {
         var initFromArray = arguments.length < 3;
-        return (typeof iteratee == 'function' && thisArg === undefined && isArray(collection))
+        return (typeof iteratee == 'function' && typeof thisArg == 'undefined' && isArray(collection))
           ? arrayFunc(collection, iteratee, accumulator, initFromArray)
           : baseReduce(collection, getCallback(iteratee, thisArg, 4), accumulator, initFromArray, eachFunc);
       };
@@ -4020,7 +4029,7 @@ window.Charts = Charts;
             ? customizer(othValue, arrValue, index)
             : customizer(arrValue, othValue, index);
         }
-        if (result === undefined) {
+        if (typeof result == 'undefined') {
           // Recursively compare arrays (susceptible to call stack limits).
           if (isLoose) {
             var othIndex = othLength;
@@ -4119,7 +4128,7 @@ window.Charts = Charts;
               ? customizer(othValue, objValue, key)
               : customizer(objValue, othValue, key);
           }
-          if (result === undefined) {
+          if (typeof result == 'undefined') {
             // Recursively compare objects (susceptible to call stack limits).
             result = (objValue && objValue === othValue) || equalFunc(objValue, othValue, customizer, isLoose, stackA, stackB);
           }
@@ -4245,29 +4254,6 @@ window.Charts = Charts;
     }
 
     /**
-     * Gets the "length" property value of `object`.
-     *
-     * **Note:** This function is used to avoid a [JIT bug](https://bugs.webkit.org/show_bug.cgi?id=142792)
-     * in Safari on iOS 8.1 ARM64.
-     *
-     * @private
-     * @param {Object} object The object to query.
-     * @returns {*} Returns the "length" value.
-     */
-    var getLength = baseProperty('length');
-
-    /**
-     * Creates an array of the own symbols of `object`.
-     *
-     * @private
-     * @param {Object} object The object to query.
-     * @returns {Array} Returns the array of symbols.
-     */
-    var getSymbols = !getOwnPropertySymbols ? constant([]) : function(object) {
-      return getOwnPropertySymbols(toObject(object));
-    };
-
-    /**
      * Gets the view, applying any `transforms` to the `start` and `end` positions.
      *
      * @private
@@ -4335,6 +4321,7 @@ window.Charts = Charts;
      * **Note:** This function only supports cloning values with tags of
      * `Boolean`, `Date`, `Error`, `Number`, `RegExp`, or `String`.
      *
+     *
      * @private
      * @param {Object} object The object to clone.
      * @param {string} tag The `toStringTag` of the object to clone.
@@ -4369,25 +4356,6 @@ window.Charts = Charts;
     }
 
     /**
-     * Invokes the method at `path` on `object`.
-     *
-     * @private
-     * @param {Object} object The object to query.
-     * @param {Array|string} path The path of the method to invoke.
-     * @param {Array} args The arguments to invoke the method with.
-     * @returns {*} Returns the result of the invoked method.
-     */
-    function invokePath(object, path, args) {
-      if (object != null && !isKey(path, object)) {
-        path = toPath(path);
-        object = path.length == 1 ? object : baseGet(object, baseSlice(path, 0, -1));
-        path = last(path);
-      }
-      var func = object == null ? object : object[path];
-      return func == null ? undefined : func.apply(object, args);
-    }
-
-    /**
      * Checks if `value` is a valid array-like index.
      *
      * @private
@@ -4416,7 +4384,7 @@ window.Charts = Charts;
       }
       var type = typeof index;
       if (type == 'number') {
-        var length = getLength(object),
+        var length = object.length,
             prereq = isLength(length) && isIndex(index, length);
       } else {
         prereq = type == 'string' && index in object;
@@ -4426,26 +4394,6 @@ window.Charts = Charts;
         return value === value ? (value === other) : (other !== other);
       }
       return false;
-    }
-
-    /**
-     * Checks if `value` is a property name and not a property path.
-     *
-     * @private
-     * @param {*} value The value to check.
-     * @param {Object} [object] The object to query keys on.
-     * @returns {boolean} Returns `true` if `value` is a property name, else `false`.
-     */
-    function isKey(value, object) {
-      var type = typeof value;
-      if ((type == 'string' && reIsPlainProp.test(value)) || type == 'number') {
-        return true;
-      }
-      if (isArray(value)) {
-        return false;
-      }
-      var result = !reIsDeepProp.test(value);
-      return result || (object != null && value in toObject(object));
     }
 
     /**
@@ -4557,7 +4505,7 @@ window.Charts = Charts;
 
     /**
      * A specialized version of `_.pick` that picks `object` properties specified
-     * by `props`.
+     * by the `props` array.
      *
      * @private
      * @param {Object} object The source object.
@@ -4683,7 +4631,7 @@ window.Charts = Charts;
       baseForIn(value, function(subValue, key) {
         result = key;
       });
-      return result === undefined || hasOwnProperty.call(value, result);
+      return typeof result == 'undefined' || hasOwnProperty.call(value, result);
     }
 
     /**
@@ -4691,7 +4639,7 @@ window.Charts = Charts;
      * own enumerable property names of `object`.
      *
      * @private
-     * @param {Object} object The object to query.
+     * @param {Object} object The object to inspect.
      * @returns {Array} Returns the array of property names.
      */
     function shimKeys(object) {
@@ -4726,7 +4674,7 @@ window.Charts = Charts;
       if (value == null) {
         return [];
       }
-      if (!isLength(getLength(value))) {
+      if (!isLength(value.length)) {
         return values(value);
       }
       return isObject(value) ? value : Object(value);
@@ -4741,24 +4689,6 @@ window.Charts = Charts;
      */
     function toObject(value) {
       return isObject(value) ? value : Object(value);
-    }
-
-    /**
-     * Converts `value` to property path array if it is not one.
-     *
-     * @private
-     * @param {*} value The value to process.
-     * @returns {Array} Returns the property path array.
-     */
-    function toPath(value) {
-      if (isArray(value)) {
-        return value;
-      }
-      var result = [];
-      baseToString(value).replace(rePropName, function(match, number, quote, string) {
-        result.push(quote ? string.replace(reEscapeChar, '$1') : (number || match));
-      });
-      return result;
     }
 
     /**
@@ -5345,8 +5275,7 @@ window.Charts = Charts;
           argsLength = arguments.length,
           caches = [],
           indexOf = getIndexOf(),
-          isCommon = indexOf == baseIndexOf,
-          result = [];
+          isCommon = indexOf == baseIndexOf;
 
       while (++argsIndex < argsLength) {
         var value = arguments[argsIndex];
@@ -5356,12 +5285,10 @@ window.Charts = Charts;
         }
       }
       argsLength = args.length;
-      if (argsLength < 2) {
-        return result;
-      }
       var array = args[0],
           index = -1,
           length = array ? array.length : 0,
+          result = [],
           seen = caches[0];
 
       outer:
@@ -5529,8 +5456,17 @@ window.Charts = Charts;
       array || (array = []);
       indexes = baseFlatten(indexes);
 
-      var result = baseAt(array, indexes);
-      basePullAt(array, indexes.sort(baseCompareAscending));
+      var length = indexes.length,
+          result = baseAt(array, indexes);
+
+      indexes.sort(baseCompareAscending);
+      while (length--) {
+        var index = parseFloat(indexes[length]);
+        if (index != previous && isIndex(index)) {
+          var previous = index;
+          splice.call(array, index, 1);
+        }
+      }
       return result;
     });
 
@@ -5574,23 +5510,19 @@ window.Charts = Charts;
      * // => [2, 4]
      */
     function remove(array, predicate, thisArg) {
-      var result = [];
-      if (!(array && array.length)) {
-        return result;
-      }
       var index = -1,
-          indexes = [],
-          length = array.length;
+          length = array ? array.length : 0,
+          result = [];
 
       predicate = getCallback(predicate, thisArg, 3);
       while (++index < length) {
         var value = array[index];
         if (predicate(value, index, array)) {
           result.push(value);
-          indexes.push(index);
+          splice.call(array, index--, 1);
+          length--;
         }
       }
-      basePullAt(array, indexes);
       return result;
     }
 
@@ -5615,7 +5547,7 @@ window.Charts = Charts;
     /**
      * Creates a slice of `array` from `start` up to, but not including, `end`.
      *
-     * **Note:** This method is used instead of `Array#slice` to support node
+     * **Note:** This function is used instead of `Array#slice` to support node
      * lists in IE < 9 and to ensure dense arrays are returned.
      *
      * @static
@@ -5914,13 +5846,12 @@ window.Charts = Charts;
     });
 
     /**
-     * Creates a duplicate-free version of an array, using `SameValueZero` for
-     * equality comparisons, in which only the first occurence of each element
-     * is kept. Providing `true` for `isSorted` performs a faster search algorithm
-     * for sorted arrays. If an iteratee function is provided it is invoked for
-     * each element in the array to generate the criterion by which uniqueness
-     * is computed. The `iteratee` is bound to `thisArg` and invoked with three
-     * arguments: (value, index, array).
+     * Creates a duplicate-value-free version of an array using `SameValueZero`
+     * for equality comparisons. Providing `true` for `isSorted` performs a faster
+     * search algorithm for sorted arrays. If an iteratee function is provided it
+     * is invoked for each value in the array to generate the criterion by which
+     * uniqueness is computed. The `iteratee` is bound to `thisArg` and invoked
+     * with three arguments: (value, index, array).
      *
      * If a property name is provided for `iteratee` the created `_.property`
      * style callback returns the property value of the given element.
@@ -5948,8 +5879,8 @@ window.Charts = Charts;
      * @returns {Array} Returns the new duplicate-value-free array.
      * @example
      *
-     * _.uniq([2, 1, 2]);
-     * // => [2, 1]
+     * _.uniq([1, 2, 1]);
+     * // => [1, 2]
      *
      * // using `isSorted`
      * _.uniq([1, 1, 2], true);
@@ -6399,7 +6330,7 @@ window.Charts = Charts;
      * // => ['barney', 'pebbles']
      */
     var at = restParam(function(collection, props) {
-      var length = collection ? getLength(collection) : 0;
+      var length = collection ? collection.length : 0;
       if (isLength(length)) {
         collection = toIterable(collection);
       }
@@ -6504,7 +6435,7 @@ window.Charts = Charts;
       if (thisArg && isIterateeCall(collection, predicate, thisArg)) {
         predicate = null;
       }
-      if (typeof predicate != 'function' || thisArg !== undefined) {
+      if (typeof predicate != 'function' || typeof thisArg != 'undefined') {
         predicate = getCallback(predicate, thisArg, 3);
       }
       return func(collection, predicate);
@@ -6674,10 +6605,10 @@ window.Charts = Charts;
     /**
      * Iterates over elements of `collection` invoking `iteratee` for each element.
      * The `iteratee` is bound to `thisArg` and invoked with three arguments:
-     * (value, index|key, collection). Iteratee functions may exit iteration early
+     * (value, index|key, collection). Iterator functions may exit iteration early
      * by explicitly returning `false`.
      *
-     * **Note:** As with other "Collections" methods, objects with a "length" property
+     * **Note:** As with other "Collections" methods, objects with a `length` property
      * are iterated like arrays. To avoid this behavior `_.forIn` or `_.forOwn`
      * may be used for object iteration.
      *
@@ -6807,7 +6738,7 @@ window.Charts = Charts;
      * // => true
      */
     function includes(collection, target, fromIndex, guard) {
-      var length = collection ? getLength(collection) : 0;
+      var length = collection ? collection.length : 0;
       if (!isLength(length)) {
         collection = values(collection);
         length = collection.length;
@@ -6876,16 +6807,16 @@ window.Charts = Charts;
     });
 
     /**
-     * Invokes the method at `path` on each element in `collection`, returning
-     * an array of the results of each invoked method. Any additional arguments
-     * are provided to each invoked method. If `methodName` is a function it is
-     * invoked for, and `this` bound to, each element in `collection`.
+     * Invokes the method named by `methodName` on each element in `collection`,
+     * returning an array of the results of each invoked method. Any additional
+     * arguments are provided to each invoked method. If `methodName` is a function
+     * it is invoked for, and `this` bound to, each element in `collection`.
      *
      * @static
      * @memberOf _
      * @category Collection
      * @param {Array|Object|string} collection The collection to iterate over.
-     * @param {Array|Function|string} path The path of the method to invoke or
+     * @param {Function|string} methodName The name of the method to invoke or
      *  the function invoked per iteration.
      * @param {...*} [args] The arguments to invoke the method with.
      * @returns {Array} Returns the array of results.
@@ -6897,16 +6828,15 @@ window.Charts = Charts;
      * _.invoke([123, 456], String.prototype.split, '');
      * // => [['1', '2', '3'], ['4', '5', '6']]
      */
-    var invoke = restParam(function(collection, path, args) {
+    var invoke = restParam(function(collection, methodName, args) {
       var index = -1,
-          isFunc = typeof path == 'function',
-          isProp = isKey(path),
-          length = getLength(collection),
+          isFunc = typeof methodName == 'function',
+          length = collection ? collection.length : 0,
           result = isLength(length) ? Array(length) : [];
 
       baseEach(collection, function(value) {
-        var func = isFunc ? path : (isProp && value != null && value[path]);
-        result[++index] = func ? func.apply(value, args) : invokePath(value, path, args);
+        var func = isFunc ? methodName : (value != null && value[methodName]);
+        result[++index] = func ? func.apply(value, args) : undefined;
       });
       return result;
     });
@@ -6943,6 +6873,7 @@ window.Charts = Charts;
      * @param {Array|Object|string} collection The collection to iterate over.
      * @param {Function|Object|string} [iteratee=_.identity] The function invoked
      *  per iteration.
+     *  create a `_.property` or `_.matches` style callback respectively.
      * @param {*} [thisArg] The `this` binding of `iteratee`.
      * @returns {Array} Returns the new mapped array.
      * @example
@@ -7036,13 +6967,13 @@ window.Charts = Charts;
     }, function() { return [[], []]; });
 
     /**
-     * Gets the property value of `path` from all elements in `collection`.
+     * Gets the value of `key` from all elements in `collection`.
      *
      * @static
      * @memberOf _
      * @category Collection
      * @param {Array|Object|string} collection The collection to iterate over.
-     * @param {Array|string} path The path of the property to pluck.
+     * @param {string} key The key of the property to pluck.
      * @returns {Array} Returns the property values.
      * @example
      *
@@ -7058,8 +6989,8 @@ window.Charts = Charts;
      * _.pluck(userIndex, 'age');
      * // => [36, 40] (iteration order is not guaranteed)
      */
-    function pluck(collection, path) {
-      return map(collection, property(path));
+    function pluck(collection, key) {
+      return map(collection, baseProperty(key));
     }
 
     /**
@@ -7087,8 +7018,8 @@ window.Charts = Charts;
      * @returns {*} Returns the accumulated value.
      * @example
      *
-     * _.reduce([1, 2], function(total, n) {
-     *   return total + n;
+     * _.reduce([1, 2], function(sum, n) {
+     *   return sum + n;
      * });
      * // => 3
      *
@@ -7260,7 +7191,7 @@ window.Charts = Charts;
      * // => 7
      */
     function size(collection) {
-      var length = collection ? getLength(collection) : 0;
+      var length = collection ? collection.length : 0;
       return isLength(length) ? length : keys(collection).length;
     }
 
@@ -7318,7 +7249,7 @@ window.Charts = Charts;
       if (thisArg && isIterateeCall(collection, predicate, thisArg)) {
         predicate = null;
       }
-      if (typeof predicate != 'function' || thisArg !== undefined) {
+      if (typeof predicate != 'function' || typeof thisArg != 'undefined') {
         predicate = getCallback(predicate, thisArg, 3);
       }
       return func(collection, predicate);
@@ -7346,8 +7277,9 @@ window.Charts = Charts;
      * @memberOf _
      * @category Collection
      * @param {Array|Object|string} collection The collection to iterate over.
-     * @param {Function|Object|string} [iteratee=_.identity] The function invoked
-     *  per iteration.
+     * @param {Array|Function|Object|string} [iteratee=_.identity] The function
+     *  invoked per iteration. If a property name or an object is provided it is
+     *  used to create a `_.property` or `_.matches` style callback respectively.
      * @param {*} [thisArg] The `this` binding of `iteratee`.
      * @returns {Array} Returns the new sorted array.
      * @example
@@ -7376,112 +7308,104 @@ window.Charts = Charts;
       if (collection == null) {
         return [];
       }
+      var index = -1,
+          length = collection.length,
+          result = isLength(length) ? Array(length) : [];
+
       if (thisArg && isIterateeCall(collection, iteratee, thisArg)) {
         iteratee = null;
       }
-      var index = -1;
       iteratee = getCallback(iteratee, thisArg, 3);
-
-      var result = baseMap(collection, function(value, key, collection) {
-        return { 'criteria': iteratee(value, key, collection), 'index': ++index, 'value': value };
+      baseEach(collection, function(value, key, collection) {
+        result[++index] = { 'criteria': iteratee(value, key, collection), 'index': index, 'value': value };
       });
       return baseSortBy(result, compareAscending);
     }
 
     /**
-     * This method is like `_.sortBy` except that it can sort by multiple iteratees
-     * or property names.
-     *
-     * If a property name is provided for an iteratee the created `_.property`
-     * style callback returns the property value of the given element.
-     *
-     * If an object is provided for an iteratee the created `_.matches` style
-     * callback returns `true` for elements that have the properties of the given
-     * object, else `false`.
+     * This method is like `_.sortBy` except that it sorts by property names
+     * instead of an iteratee function.
      *
      * @static
      * @memberOf _
      * @category Collection
      * @param {Array|Object|string} collection The collection to iterate over.
-     * @param {...(Function|Function[]|Object|Object[]|string|string[])} iteratees
-     *  The iteratees to sort by, specified as individual values or arrays of values.
+     * @param {...(string|string[])} props The property names to sort by,
+     *  specified as individual property names or arrays of property names.
      * @returns {Array} Returns the new sorted array.
      * @example
      *
      * var users = [
-     *   { 'user': 'fred',   'age': 48 },
      *   { 'user': 'barney', 'age': 36 },
-     *   { 'user': 'fred',   'age': 42 },
-     *   { 'user': 'barney', 'age': 34 }
+     *   { 'user': 'fred',   'age': 40 },
+     *   { 'user': 'barney', 'age': 26 },
+     *   { 'user': 'fred',   'age': 30 }
      * ];
      *
      * _.map(_.sortByAll(users, ['user', 'age']), _.values);
-     * // => [['barney', 34], ['barney', 36], ['fred', 42], ['fred', 48]]
-     *
-     * _.map(_.sortByAll(users, 'user', function(chr) {
-     *   return Math.floor(chr.age / 10);
-     * }), _.values);
-     * // => [['barney', 36], ['barney', 34], ['fred', 48], ['fred', 42]]
+     * // => [['barney', 26], ['barney', 36], ['fred', 30], ['fred', 40]]
      */
-    var sortByAll = restParam(function(collection, iteratees) {
+    function sortByAll() {
+      var args = arguments,
+          collection = args[0],
+          guard = args[3],
+          index = 0,
+          length = args.length - 1;
+
       if (collection == null) {
         return [];
       }
-      var guard = iteratees[2];
-      if (guard && isIterateeCall(iteratees[0], iteratees[1], guard)) {
-        iteratees.length = 1;
+      var props = Array(length);
+      while (index < length) {
+        props[index] = args[++index];
       }
-      return baseSortByOrder(collection, baseFlatten(iteratees), []);
-    });
+      if (guard && isIterateeCall(args[1], args[2], guard)) {
+        props = args[1];
+      }
+      return baseSortByOrder(collection, baseFlatten(props), []);
+    }
 
     /**
      * This method is like `_.sortByAll` except that it allows specifying the
-     * sort orders of the iteratees to sort by. A truthy value in `orders` will
-     * sort the corresponding property name in ascending order while a falsey
-     * value will sort it in descending order.
-     *
-     * If a property name is provided for an iteratee the created `_.property`
-     * style callback returns the property value of the given element.
-     *
-     * If an object is provided for an iteratee the created `_.matches` style
-     * callback returns `true` for elements that have the properties of the given
-     * object, else `false`.
+     * sort orders of the property names to sort by. A truthy value in `orders`
+     * will sort the corresponding property name in ascending order while a
+     * falsey value will sort it in descending order.
      *
      * @static
      * @memberOf _
      * @category Collection
      * @param {Array|Object|string} collection The collection to iterate over.
-     * @param {Function[]|Object[]|string[]} iteratees The iteratees to sort by.
-     * @param {boolean[]} orders The sort orders of `iteratees`.
+     * @param {string[]} props The property names to sort by.
+     * @param {boolean[]} orders The sort orders of `props`.
      * @param- {Object} [guard] Enables use as a callback for functions like `_.reduce`.
      * @returns {Array} Returns the new sorted array.
      * @example
      *
      * var users = [
-     *   { 'user': 'fred',   'age': 48 },
-     *   { 'user': 'barney', 'age': 34 },
-     *   { 'user': 'fred',   'age': 42 },
-     *   { 'user': 'barney', 'age': 36 }
+     *   { 'user': 'barney', 'age': 26 },
+     *   { 'user': 'fred',   'age': 40 },
+     *   { 'user': 'barney', 'age': 36 },
+     *   { 'user': 'fred',   'age': 30 }
      * ];
      *
      * // sort by `user` in ascending order and by `age` in descending order
      * _.map(_.sortByOrder(users, ['user', 'age'], [true, false]), _.values);
-     * // => [['barney', 36], ['barney', 34], ['fred', 48], ['fred', 42]]
+     * // => [['barney', 36], ['barney', 26], ['fred', 40], ['fred', 30]]
      */
-    function sortByOrder(collection, iteratees, orders, guard) {
+    function sortByOrder(collection, props, orders, guard) {
       if (collection == null) {
         return [];
       }
-      if (guard && isIterateeCall(iteratees, orders, guard)) {
+      if (guard && isIterateeCall(props, orders, guard)) {
         orders = null;
       }
-      if (!isArray(iteratees)) {
-        iteratees = iteratees == null ? [] : [iteratees];
+      if (!isArray(props)) {
+        props = props == null ? [] : [props];
       }
       if (!isArray(orders)) {
         orders = orders == null ? [] : [orders];
       }
-      return baseSortByOrder(collection, iteratees, orders);
+      return baseSortByOrder(collection, props, orders);
     }
 
     /**
@@ -7634,8 +7558,7 @@ window.Charts = Charts;
       return function() {
         if (--n > 0) {
           result = func.apply(this, arguments);
-        }
-        if (n <= 1) {
+        } else {
           func = null;
         }
         return result;
@@ -7650,7 +7573,7 @@ window.Charts = Charts;
      * The `_.bind.placeholder` value, which defaults to `_` in monolithic builds,
      * may be used as a placeholder for partially applied arguments.
      *
-     * **Note:** Unlike native `Function#bind` this method does not set the "length"
+     * **Note:** Unlike native `Function#bind` this method does not set the `length`
      * property of bound functions.
      *
      * @static
@@ -7692,7 +7615,7 @@ window.Charts = Charts;
      * of method names. If no method names are provided all enumerable function
      * properties, own and inherited, of `object` are bound.
      *
-     * **Note:** This method does not set the "length" property of bound functions.
+     * **Note:** This method does not set the `length` property of bound functions.
      *
      * @static
      * @memberOf _
@@ -7733,7 +7656,7 @@ window.Charts = Charts;
      *
      * This method differs from `_.bind` by allowing bound functions to reference
      * methods that may be redefined or don't yet exist.
-     * See [Peter Michaux's article](http://peter.michaux.ca/articles/lazy-function-definition-pattern)
+     * See [Peter Michaux's article](http://michaux.ca/articles/lazy-function-definition-pattern)
      * for more details.
      *
      * The `_.bindKey.placeholder` value, which defaults to `_` in monolithic
@@ -7790,7 +7713,7 @@ window.Charts = Charts;
      * The `_.curry.placeholder` value, which defaults to `_` in monolithic builds,
      * may be used as a placeholder for provided arguments.
      *
-     * **Note:** This method does not set the "length" property of curried functions.
+     * **Note:** This method does not set the `length` property of curried functions.
      *
      * @static
      * @memberOf _
@@ -7829,7 +7752,7 @@ window.Charts = Charts;
      * The `_.curryRight.placeholder` value, which defaults to `_` in monolithic
      * builds, may be used as a placeholder for provided arguments.
      *
-     * **Note:** This method does not set the "length" property of curried functions.
+     * **Note:** This method does not set the `length` property of curried functions.
      *
      * @static
      * @memberOf _
@@ -8241,7 +8164,7 @@ window.Charts = Charts;
      * // `initialize` invokes `createApplication` once
      */
     function once(func) {
-      return before(2, func);
+      return before(func, 2);
     }
 
     /**
@@ -8252,7 +8175,7 @@ window.Charts = Charts;
      * The `_.partial.placeholder` value, which defaults to `_` in monolithic
      * builds, may be used as a placeholder for partially applied arguments.
      *
-     * **Note:** This method does not set the "length" property of partially
+     * **Note:** This method does not set the `length` property of partially
      * applied functions.
      *
      * @static
@@ -8285,7 +8208,7 @@ window.Charts = Charts;
      * The `_.partialRight.placeholder` value, which defaults to `_` in monolithic
      * builds, may be used as a placeholder for partially applied arguments.
      *
-     * **Note:** This method does not set the "length" property of partially
+     * **Note:** This method does not set the `length` property of partially
      * applied functions.
      *
      * @static
@@ -8369,7 +8292,7 @@ window.Charts = Charts;
       if (typeof func != 'function') {
         throw new TypeError(FUNC_ERROR_TEXT);
       }
-      start = nativeMax(start === undefined ? (func.length - 1) : (+start || 0), 0);
+      start = nativeMax(typeof start == 'undefined' ? (func.length - 1) : (+start || 0), 0);
       return function() {
         var args = arguments,
             index = -1,
@@ -8773,7 +8696,7 @@ window.Charts = Charts;
       if (value == null) {
         return true;
       }
-      var length = getLength(value);
+      var length = value.length;
       if (isLength(length) && (isArray(value) || isString(value) || isArguments(value) ||
           (isObjectLike(value) && isFunction(value.splice)))) {
         return !length;
@@ -8799,7 +8722,7 @@ window.Charts = Charts;
      * @category Lang
      * @param {*} value The value to compare.
      * @param {*} other The other value to compare.
-     * @param {Function} [customizer] The function to customize value comparisons.
+     * @param {Function} [customizer] The function to customize comparing values.
      * @param {*} [thisArg] The `this` binding of `customizer`.
      * @returns {boolean} Returns `true` if the values are equivalent, else `false`.
      * @example
@@ -8830,7 +8753,7 @@ window.Charts = Charts;
         return value === other;
       }
       var result = customizer ? customizer(value, other) : undefined;
-      return result === undefined ? baseIsEqual(value, other, customizer) : !!result;
+      return typeof result == 'undefined' ? baseIsEqual(value, other, customizer) : !!result;
     }
 
     /**
@@ -8952,7 +8875,7 @@ window.Charts = Charts;
      * @category Lang
      * @param {Object} object The object to inspect.
      * @param {Object} source The object of property values to match.
-     * @param {Function} [customizer] The function to customize value comparisons.
+     * @param {Function} [customizer] The function to customize comparing values.
      * @param {*} [thisArg] The `this` binding of `customizer`.
      * @returns {boolean} Returns `true` if `object` is a match, else `false`.
      * @example
@@ -8985,13 +8908,12 @@ window.Charts = Charts;
         return false;
       }
       customizer = typeof customizer == 'function' && bindCallback(customizer, thisArg, 3);
-      object = toObject(object);
       if (!customizer && length == 1) {
         var key = props[0],
             value = source[key];
 
         if (isStrictComparable(value)) {
-          return value === object[key] && (value !== undefined || (key in object));
+          return value === object[key] && (typeof value != 'undefined' || (key in toObject(object)));
         }
       }
       var values = Array(length),
@@ -9001,7 +8923,7 @@ window.Charts = Charts;
         value = values[length] = source[props[length]];
         strictCompareFlags[length] = isStrictComparable(value);
       }
-      return baseIsMatch(object, props, values, strictCompareFlags, customizer);
+      return baseIsMatch(toObject(object), props, values, strictCompareFlags, customizer);
     }
 
     /**
@@ -9056,9 +8978,9 @@ window.Charts = Charts;
         return false;
       }
       if (objToString.call(value) == funcTag) {
-        return reIsNative.test(fnToString.call(value));
+        return reNative.test(fnToString.call(value));
       }
-      return isObjectLike(value) && reIsHostCtor.test(value);
+      return isObjectLike(value) && reHostCtor.test(value);
     }
 
     /**
@@ -9226,7 +9148,7 @@ window.Charts = Charts;
      * // => false
      */
     function isUndefined(value) {
-      return value === undefined;
+      return typeof value == 'undefined';
     }
 
     /**
@@ -9245,7 +9167,7 @@ window.Charts = Charts;
      * // => [2, 3]
      */
     function toArray(value) {
-      var length = value ? getLength(value) : 0;
+      var length = value ? value.length : 0;
       if (!isLength(length)) {
         return values(value);
       }
@@ -9291,17 +9213,13 @@ window.Charts = Charts;
      * The `customizer` is bound to `thisArg` and invoked with five arguments:
      * (objectValue, sourceValue, key, object, source).
      *
-     * **Note:** This method mutates `object` and is based on
-     * [`Object.assign`](https://people.mozilla.org/~jorendorff/es6-draft.html#sec-object.assign).
-     *
-     *
      * @static
      * @memberOf _
      * @alias extend
      * @category Object
      * @param {Object} object The destination object.
      * @param {...Object} [sources] The source objects.
-     * @param {Function} [customizer] The function to customize assigned values.
+     * @param {Function} [customizer] The function to customize assigning values.
      * @param {*} [thisArg] The `this` binding of `customizer`.
      * @returns {Object} Returns `object`.
      * @example
@@ -9311,17 +9229,13 @@ window.Charts = Charts;
      *
      * // using a customizer callback
      * var defaults = _.partialRight(_.assign, function(value, other) {
-     *   return _.isUndefined(value) ? other : value;
+     *   return typeof value == 'undefined' ? other : value;
      * });
      *
      * defaults({ 'user': 'barney' }, { 'age': 36 }, { 'user': 'fred' });
      * // => { 'user': 'barney', 'age': 36 }
      */
-    var assign = createAssigner(function(object, source, customizer) {
-      return customizer
-        ? assignWith(object, source, customizer)
-        : baseAssign(object, source);
-    });
+    var assign = createAssigner(baseAssign);
 
     /**
      * Creates an object that inherits from the given `prototype` object. If a
@@ -9362,15 +9276,13 @@ window.Charts = Charts;
       if (guard && isIterateeCall(prototype, properties, guard)) {
         properties = null;
       }
-      return properties ? baseAssign(result, properties) : result;
+      return properties ? baseCopy(properties, result, keys(properties)) : result;
     }
 
     /**
      * Assigns own enumerable properties of source object(s) to the destination
      * object for all destination properties that resolve to `undefined`. Once a
      * property is set, additional values of the same property are ignored.
-     *
-     * **Note:** This method mutates `object`.
      *
      * @static
      * @memberOf _
@@ -9495,7 +9407,7 @@ window.Charts = Charts;
     /**
      * Iterates over own and inherited enumerable properties of an object invoking
      * `iteratee` for each property. The `iteratee` is bound to `thisArg` and invoked
-     * with three arguments: (value, key, object). Iteratee functions may exit
+     * with three arguments: (value, key, object). Iterator functions may exit
      * iteration early by explicitly returning `false`.
      *
      * @static
@@ -9551,7 +9463,7 @@ window.Charts = Charts;
     /**
      * Iterates over own enumerable properties of an object invoking `iteratee`
      * for each property. The `iteratee` is bound to `thisArg` and invoked with
-     * three arguments: (value, key, object). Iteratee functions may exit iteration
+     * three arguments: (value, key, object). Iterator functions may exit iteration
      * early by explicitly returning `false`.
      *
      * @static
@@ -9624,68 +9536,24 @@ window.Charts = Charts;
     }
 
     /**
-     * Gets the property value of `path` on `object`. If the resolved value is
-     * `undefined` the `defaultValue` is used in its place.
+     * Checks if `key` exists as a direct property of `object` instead of an
+     * inherited property.
      *
      * @static
      * @memberOf _
      * @category Object
-     * @param {Object} object The object to query.
-     * @param {Array|string} path The path of the property to get.
-     * @param {*} [defaultValue] The value returned if the resolved value is `undefined`.
-     * @returns {*} Returns the resolved value.
+     * @param {Object} object The object to inspect.
+     * @param {string} key The key to check.
+     * @returns {boolean} Returns `true` if `key` is a direct property, else `false`.
      * @example
      *
-     * var object = { 'a': [{ 'b': { 'c': 3 } }] };
+     * var object = { 'a': 1, 'b': 2, 'c': 3 };
      *
-     * _.get(object, 'a[0].b.c');
-     * // => 3
-     *
-     * _.get(object, ['a', '0', 'b', 'c']);
-     * // => 3
-     *
-     * _.get(object, 'a.b.c', 'default');
-     * // => 'default'
-     */
-    function get(object, path, defaultValue) {
-      var result = object == null ? undefined : baseGet(object, toPath(path), path + '');
-      return result === undefined ? defaultValue : result;
-    }
-
-    /**
-     * Checks if `path` is a direct property.
-     *
-     * @static
-     * @memberOf _
-     * @category Object
-     * @param {Object} object The object to query.
-     * @param {Array|string} path The path to check.
-     * @returns {boolean} Returns `true` if `path` is a direct property, else `false`.
-     * @example
-     *
-     * var object = { 'a': { 'b': { 'c': 3 } } };
-     *
-     * _.has(object, 'a');
-     * // => true
-     *
-     * _.has(object, 'a.b.c');
-     * // => true
-     *
-     * _.has(object, ['a', 'b', 'c']);
+     * _.has(object, 'b');
      * // => true
      */
-    function has(object, path) {
-      if (object == null) {
-        return false;
-      }
-      var result = hasOwnProperty.call(object, path);
-      if (!result && !isKey(path)) {
-        path = toPath(path);
-        object = path.length == 1 ? object : baseGet(object, baseSlice(path, 0, -1));
-        path = last(path);
-        result = object != null && hasOwnProperty.call(object, path);
-      }
-      return result;
+    function has(object, key) {
+      return object ? hasOwnProperty.call(object, key) : false;
     }
 
     /**
@@ -9748,7 +9616,7 @@ window.Charts = Charts;
      * @static
      * @memberOf _
      * @category Object
-     * @param {Object} object The object to query.
+     * @param {Object} object The object to inspect.
      * @returns {Array} Returns the array of property names.
      * @example
      *
@@ -9771,7 +9639,7 @@ window.Charts = Charts;
             length = object.length;
       }
       if ((typeof Ctor == 'function' && Ctor.prototype === object) ||
-          (typeof object != 'function' && isLength(length))) {
+          (typeof object != 'function' && (length && isLength(length)))) {
         return shimKeys(object);
       }
       return isObject(object) ? nativeKeys(object) : [];
@@ -9785,7 +9653,7 @@ window.Charts = Charts;
      * @static
      * @memberOf _
      * @category Object
-     * @param {Object} object The object to query.
+     * @param {Object} object The object to inspect.
      * @returns {Array} Returns the array of property names.
      * @example
      *
@@ -9893,7 +9761,7 @@ window.Charts = Charts;
      * @category Object
      * @param {Object} object The destination object.
      * @param {...Object} [sources] The source objects.
-     * @param {Function} [customizer] The function to customize assigned values.
+     * @param {Function} [customizer] The function to customize merging properties.
      * @param {*} [thisArg] The `this` binding of `customizer`.
      * @returns {Object} Returns `object`.
      * @example
@@ -9978,7 +9846,7 @@ window.Charts = Charts;
      * @static
      * @memberOf _
      * @category Object
-     * @param {Object} object The object to query.
+     * @param {Object} object The object to inspect.
      * @returns {Array} Returns the new array of key-value pairs.
      * @example
      *
@@ -10034,93 +9902,41 @@ window.Charts = Charts;
     });
 
     /**
-     * This method is like `_.get` except that if the resolved value is a function
-     * it is invoked with the `this` binding of its parent object and its result
-     * is returned.
+     * Resolves the value of property `key` on `object`. If the value of `key` is
+     * a function it is invoked with the `this` binding of `object` and its result
+     * is returned, else the property value is returned. If the property value is
+     * `undefined` the `defaultValue` is used in its place.
      *
      * @static
      * @memberOf _
      * @category Object
      * @param {Object} object The object to query.
-     * @param {Array|string} path The path of the property to resolve.
-     * @param {*} [defaultValue] The value returned if the resolved value is `undefined`.
+     * @param {string} key The key of the property to resolve.
+     * @param {*} [defaultValue] The value returned if the property value
+     *  resolves to `undefined`.
      * @returns {*} Returns the resolved value.
      * @example
      *
-     * var object = { 'a': [{ 'b': { 'c1': 3, 'c2': _.constant(4) } }] };
+     * var object = { 'user': 'fred', 'age': _.constant(40) };
      *
-     * _.result(object, 'a[0].b.c1');
-     * // => 3
+     * _.result(object, 'user');
+     * // => 'fred'
      *
-     * _.result(object, 'a[0].b.c2');
-     * // => 4
+     * _.result(object, 'age');
+     * // => 40
      *
-     * _.result(object, 'a.b.c', 'default');
-     * // => 'default'
+     * _.result(object, 'status', 'busy');
+     * // => 'busy'
      *
-     * _.result(object, 'a.b.c', _.constant('default'));
-     * // => 'default'
+     * _.result(object, 'status', _.constant('busy'));
+     * // => 'busy'
      */
-    function result(object, path, defaultValue) {
-      var result = object == null ? undefined : object[path];
-      if (result === undefined) {
-        if (object != null && !isKey(path, object)) {
-          path = toPath(path);
-          object = path.length == 1 ? object : baseGet(object, baseSlice(path, 0, -1));
-          result = object == null ? undefined : object[last(path)];
-        }
-        result = result === undefined ? defaultValue : result;
+    function result(object, key, defaultValue) {
+      var value = object == null ? undefined : object[key];
+      if (typeof value == 'undefined') {
+        value = defaultValue;
       }
-      return isFunction(result) ? result.call(object) : result;
-    }
-
-    /**
-     * Sets the property value of `path` on `object`. If a portion of `path`
-     * does not exist it is created.
-     *
-     * @static
-     * @memberOf _
-     * @category Object
-     * @param {Object} object The object to augment.
-     * @param {Array|string} path The path of the property to set.
-     * @param {*} value The value to set.
-     * @returns {Object} Returns `object`.
-     * @example
-     *
-     * var object = { 'a': [{ 'b': { 'c': 3 } }] };
-     *
-     * _.set(object, 'a[0].b.c', 4);
-     * console.log(object.a[0].b.c);
-     * // => 4
-     *
-     * _.set(object, 'x[0].y.z', 5);
-     * console.log(object.x[0].y.z);
-     * // => 5
-     */
-    function set(object, path, value) {
-      if (object == null) {
-        return object;
-      }
-      var pathKey = (path + '');
-      path = (object[pathKey] != null || isKey(path, object)) ? [pathKey] : toPath(path);
-
-      var index = -1,
-          length = path.length,
-          endIndex = length - 1,
-          nested = object;
-
-      while (nested != null && ++index < length) {
-        var key = path[index];
-        if (isObject(nested)) {
-          if (index == endIndex) {
-            nested[key] = value;
-          } else if (nested[key] == null) {
-            nested[key] = isIndex(path[index + 1]) ? [] : {};
-          }
-        }
-        nested = nested[key];
-      }
-      return object;
+      return isFunction(value) ? value.call(object) : value;
     }
 
     /**
@@ -10128,7 +9944,7 @@ window.Charts = Charts;
      * `accumulator` object which is the result of running each of its own enumerable
      * properties through `iteratee`, with each invocation potentially mutating
      * the `accumulator` object. The `iteratee` is bound to `thisArg` and invoked
-     * with four arguments: (accumulator, value, key, object). Iteratee functions
+     * with four arguments: (accumulator, value, key, object). Iterator functions
      * may exit iteration early by explicitly returning `false`.
      *
      * @static
@@ -10271,7 +10087,7 @@ window.Charts = Charts;
       } else {
         end = +end || 0;
       }
-      return value >= nativeMin(start, end) && value < nativeMax(start, end);
+      return value >= start && value < end;
     }
 
     /**
@@ -10396,7 +10212,7 @@ window.Charts = Charts;
      */
     function deburr(string) {
       string = baseToString(string);
-      return string && string.replace(reLatin1, deburrLetter).replace(reComboMark, '');
+      return string && string.replace(reLatin1, deburrLetter).replace(reComboMarks, '');
     }
 
     /**
@@ -10425,7 +10241,7 @@ window.Charts = Charts;
       target = (target + '');
 
       var length = string.length;
-      position = position === undefined
+      position = typeof position == 'undefined'
         ? length
         : nativeMin(position < 0 ? 0 : (+position || 0), length);
 
@@ -10447,10 +10263,9 @@ window.Charts = Charts;
      * (under "semi-related fun fact") for more details.
      *
      * Backticks are escaped because in Internet Explorer < 9, they can break out
-     * of attribute values or HTML comments. See [#59](https://html5sec.org/#59),
-     * [#102](https://html5sec.org/#102), [#108](https://html5sec.org/#108), and
-     * [#133](https://html5sec.org/#133) of the [HTML5 Security Cheatsheet](https://html5sec.org/)
-     * for more details.
+     * of attribute values or HTML comments. See [#102](https://html5sec.org/#102),
+     * [#108](https://html5sec.org/#108), and [#133](https://html5sec.org/#133) of
+     * the [HTML5 Security Cheatsheet](https://html5sec.org/) for more details.
      *
      * When working with HTML you should always [quote attribute values](http://wonko.com/post/html-escaping)
      * to reduce XSS vectors.
@@ -10644,7 +10459,7 @@ window.Charts = Charts;
           radix = +radix;
         }
         string = trim(string);
-        return nativeParseInt(string, radix || (reHasHexPrefix.test(string) ? 16 : 10));
+        return nativeParseInt(string, radix || (reHexPrefix.test(string) ? 16 : 10));
       };
     }
 
@@ -10869,9 +10684,9 @@ window.Charts = Charts;
         options = otherOptions = null;
       }
       string = baseToString(string);
-      options = assignWith(baseAssign({}, otherOptions || options), settings, assignOwnDefaults);
+      options = baseAssign(baseAssign({}, otherOptions || options), settings, assignOwnDefaults);
 
-      var imports = assignWith(baseAssign({}, options.imports), settings.imports, assignOwnDefaults),
+      var imports = baseAssign(baseAssign({}, options.imports), settings.imports, assignOwnDefaults),
           importsKeys = keys(imports),
           importsValues = baseValues(imports, importsKeys);
 
@@ -11275,7 +11090,9 @@ window.Charts = Charts;
       if (guard && isIterateeCall(func, thisArg, guard)) {
         thisArg = null;
       }
-      return baseCallback(func, thisArg);
+      return isObjectLike(func)
+        ? matches(func)
+        : baseCallback(func, thisArg);
     }
 
     /**
@@ -11349,7 +11166,7 @@ window.Charts = Charts;
     }
 
     /**
-     * Creates a function which compares the property value of `path` on a given
+     * Creates a function which compares the property value of `key` on a given
      * object to `value`.
      *
      * **Note:** This method supports comparing arrays, booleans, `Date` objects,
@@ -11359,7 +11176,7 @@ window.Charts = Charts;
      * @static
      * @memberOf _
      * @category Utility
-     * @param {Array|string} path The path of the property to get.
+     * @param {string} key The key of the property to get.
      * @param {*} value The value to compare.
      * @returns {Function} Returns the new function.
      * @example
@@ -11372,75 +11189,22 @@ window.Charts = Charts;
      * _.find(users, _.matchesProperty('user', 'fred'));
      * // => { 'user': 'fred' }
      */
-    function matchesProperty(path, value) {
-      return baseMatchesProperty(path, baseClone(value, true));
+    function matchesProperty(key, value) {
+      return baseMatchesProperty(key + '', baseClone(value, true));
     }
-
-    /**
-     * Creates a function which invokes the method at `path` on a given object.
-     *
-     * @static
-     * @memberOf _
-     * @category Utility
-     * @param {Array|string} path The path of the method to invoke.
-     * @returns {Function} Returns the new function.
-     * @example
-     *
-     * var objects = [
-     *   { 'a': { 'b': { 'c': _.constant(2) } } },
-     *   { 'a': { 'b': { 'c': _.constant(1) } } }
-     * ];
-     *
-     * _.map(objects, _.method('a.b.c'));
-     * // => [2, 1]
-     *
-     * _.invoke(_.sortBy(objects, _.method(['a', 'b', 'c'])), 'a.b.c');
-     * // => [1, 2]
-     */
-    var method = restParam(function(path, args) {
-      return function(object) {
-        return invokePath(object, path, args);
-      }
-    });
-
-    /**
-     * The opposite of `_.method`; this method creates a function which invokes
-     * the method at a given path on `object`.
-     *
-     * @static
-     * @memberOf _
-     * @category Utility
-     * @param {Object} object The object to query.
-     * @returns {Function} Returns the new function.
-     * @example
-     *
-     * var array = _.times(3, _.constant),
-     *     object = { 'a': array, 'b': array, 'c': array };
-     *
-     * _.map(['a[2]', 'c[0]'], _.methodOf(object));
-     * // => [2, 0]
-     *
-     * _.map([['a', '2'], ['c', '0']], _.methodOf(object));
-     * // => [2, 0]
-     */
-    var methodOf = restParam(function(object, args) {
-      return function(path) {
-        return invokePath(object, path, args);
-      };
-    });
 
     /**
      * Adds all own enumerable function properties of a source object to the
      * destination object. If `object` is a function then methods are added to
      * its prototype as well.
      *
-     * **Note:** Use `_.runInContext` to create a pristine `lodash` function to
-     * avoid conflicts caused by modifying the original.
+     * **Note:** Use `_.runInContext` to create a pristine `lodash` function
+     * for mixins to avoid conflicts caused by modifying the original.
      *
      * @static
      * @memberOf _
      * @category Utility
-     * @param {Function|Object} [object=lodash] The destination object.
+     * @param {Function|Object} [object=this] object The destination object.
      * @param {Object} source The object of functions to add.
      * @param {Object} [options] The options object.
      * @param {boolean} [options.chain=true] Specify whether the functions added
@@ -11557,61 +11321,61 @@ window.Charts = Charts;
     }
 
     /**
-     * Creates a function which returns the property value at `path` on a
-     * given object.
+     * Creates a function which returns the property value of `key` on a given object.
      *
      * @static
      * @memberOf _
      * @category Utility
-     * @param {Array|string} path The path of the property to get.
+     * @param {string} key The key of the property to get.
      * @returns {Function} Returns the new function.
      * @example
      *
-     * var objects = [
-     *   { 'a': { 'b': { 'c': 2 } } },
-     *   { 'a': { 'b': { 'c': 1 } } }
+     * var users = [
+     *   { 'user': 'fred' },
+     *   { 'user': 'barney' }
      * ];
      *
-     * _.map(objects, _.property('a.b.c'));
-     * // => [2, 1]
+     * var getName = _.property('user');
      *
-     * _.pluck(_.sortBy(objects, _.property(['a', 'b', 'c'])), 'a.b.c');
-     * // => [1, 2]
+     * _.map(users, getName);
+     * // => ['fred', 'barney']
+     *
+     * _.pluck(_.sortBy(users, getName), 'user');
+     * // => ['barney', 'fred']
      */
-    function property(path) {
-      return isKey(path) ? baseProperty(path) : basePropertyDeep(path);
+    function property(key) {
+      return baseProperty(key + '');
     }
 
     /**
      * The opposite of `_.property`; this method creates a function which returns
-     * the property value at a given path on `object`.
+     * the property value of a given key on `object`.
      *
      * @static
      * @memberOf _
      * @category Utility
-     * @param {Object} object The object to query.
+     * @param {Object} object The object to inspect.
      * @returns {Function} Returns the new function.
      * @example
      *
-     * var array = [0, 1, 2],
-     *     object = { 'a': array, 'b': array, 'c': array };
+     * var object = { 'a': 3, 'b': 1, 'c': 2 };
      *
-     * _.map(['a[2]', 'c[0]'], _.propertyOf(object));
-     * // => [2, 0]
+     * _.map(['a', 'c'], _.propertyOf(object));
+     * // => [3, 2]
      *
-     * _.map([['a', '2'], ['c', '0']], _.propertyOf(object));
-     * // => [2, 0]
+     * _.sortBy(['a', 'b', 'c'], _.propertyOf(object));
+     * // => ['b', 'c', 'a']
      */
     function propertyOf(object) {
-      return function(path) {
-        return baseGet(object, toPath(path), path + '');
+      return function(key) {
+        return object == null ? undefined : object[key];
       };
     }
 
     /**
      * Creates an array of numbers (positive and/or negative) progressing from
      * `start` up to, but not including, `end`. If `end` is not specified it is
-     * set to `start` with `start` then set to `0`. If `end` is less than `start`
+     * set to `start` with `start` then set to `0`. If `start` is less than `end`
      * a zero-length range is created unless a negative `step` is specified.
      *
      * @static
@@ -11687,7 +11451,7 @@ window.Charts = Charts;
      * _.times(3, function(n) {
      *   mage.castSpell(n);
      * });
-     * // => invokes `mage.castSpell(n)` three times with `n` of `0`, `1`, and `2`
+     * // => invokes `mage.castSpell(n)` three times with `n` of `0`, `1`, and `2` respectively
      *
      * _.times(3, function(n) {
      *   this.cast(n);
@@ -11695,7 +11459,7 @@ window.Charts = Charts;
      * // => also invokes `mage.castSpell(n)` three times
      */
     function times(n, iteratee, thisArg) {
-      n = floor(n);
+      n = +n;
 
       // Exit early to avoid a JSC JIT bug in Safari 8
       // where `Array(0)` is treated as `Array(1)`.
@@ -11754,7 +11518,7 @@ window.Charts = Charts;
      * // => 10
      */
     function add(augend, addend) {
-      return (+augend || 0) + (+addend || 0);
+      return augend + addend;
     }
 
     /**
@@ -11980,8 +11744,6 @@ window.Charts = Charts;
     lodash.matchesProperty = matchesProperty;
     lodash.memoize = memoize;
     lodash.merge = merge;
-    lodash.method = method;
-    lodash.methodOf = methodOf;
     lodash.mixin = mixin;
     lodash.negate = negate;
     lodash.omit = omit;
@@ -12002,7 +11764,6 @@ window.Charts = Charts;
     lodash.remove = remove;
     lodash.rest = rest;
     lodash.restParam = restParam;
-    lodash.set = set;
     lodash.shuffle = shuffle;
     lodash.slice = slice;
     lodash.sortBy = sortBy;
@@ -12071,7 +11832,6 @@ window.Charts = Charts;
     lodash.findLastKey = findLastKey;
     lodash.findWhere = findWhere;
     lodash.first = first;
-    lodash.get = get;
     lodash.has = has;
     lodash.identity = identity;
     lodash.includes = includes;
@@ -12260,7 +12020,7 @@ window.Charts = Charts;
     // Add `LazyWrapper` methods for `_.pluck` and `_.where`.
     arrayEach(['pluck', 'where'], function(methodName, index) {
       var operationName = index ? 'filter' : 'map',
-          createCallback = index ? baseMatches : property;
+          createCallback = index ? baseMatches : baseProperty;
 
       LazyWrapper.prototype[methodName] = function(value) {
         return this[operationName](createCallback(value));
@@ -12282,7 +12042,7 @@ window.Charts = Charts;
       start = start == null ? 0 : (+start || 0);
       var result = start < 0 ? this.takeRight(-start) : this.drop(start);
 
-      if (end !== undefined) {
+      if (typeof end != 'undefined') {
         end = (+end || 0);
         result = end < 0 ? result.dropRight(-end) : result.take(end - start);
       }
@@ -12313,7 +12073,7 @@ window.Charts = Charts;
             useLazy = isLazy || isArray(value);
 
         if (useLazy && checkIteratee && typeof iteratee == 'function' && iteratee.length != 1) {
-          // avoid lazy use if the iteratee has a "length" value other than `1`
+          // avoid lazy use if the iteratee has a `length` other than `1`
           isLazy = useLazy = false;
         }
         var onlyLazy = isLazy && !isHybrid;
@@ -12430,7 +12190,7 @@ window.Charts = Charts;
 }.call(this));
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],"/Users/akrasman/github/binomo/graphs/src/config/chart/area.js":[function(require,module,exports){
+},{}],"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/config/chart/area.js":[function(require,module,exports){
 module.exports = {
   chart: {
     type: 'area',
@@ -12462,7 +12222,7 @@ module.exports = {
   }
 };
 
-},{}],"/Users/akrasman/github/binomo/graphs/src/config/chart/candlestick.js":[function(require,module,exports){
+},{}],"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/config/chart/candlestick.js":[function(require,module,exports){
 module.exports = {
   series : [{
     type : 'candlestick',
@@ -12476,7 +12236,6 @@ module.exports = {
       },
       // groupPadding: 0.1,
       fillOpacity: .7,
-      lineWidth: 1,
       marker: {
         enabled: false
       },
@@ -12503,7 +12262,7 @@ module.exports = {
   }
 };
 
-},{}],"/Users/akrasman/github/binomo/graphs/src/config/chart/default.js":[function(require,module,exports){
+},{}],"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/config/chart/default.js":[function(require,module,exports){
 var CONFIG = require('../config.js');
 
 module.exports = {
@@ -12521,7 +12280,16 @@ module.exports = {
   },
 
   navigator: {
-    enabled: false
+    // enabled: false,
+    height: 68,
+    margin: 0,
+    xAxis: {
+      labels: {
+        enabled: false
+      },
+      ordinal: true
+    },
+    adaptToUpdatedData: false
   },
 
   scrollbar: {
@@ -12591,7 +12359,7 @@ module.exports = {
   xAxis: {
     title: "",
     lineWidth: 0,
-    tickInterval: CONFIG.CHART.XAXIS_TICK_INTERVAL,
+    // tickInterval: CONFIG.CHART.XAXIS_TICK_INTERVAL,
     range: CONFIG.CHART.XAXIS_RANGE,
     minRange: 60 * 1000,
     tickPosition: 'inside',
@@ -12602,7 +12370,8 @@ module.exports = {
     gridLineWidth: 1,
     gridLineColor: 'rgba(0, 0, 0, 0.07)',
     showFirstLabel: true,
-    showLastLabel: false,
+    showLastLabel: true,
+    endOnTick: false,
     type: "datetime",
     labels: {
       style: {
@@ -12618,7 +12387,7 @@ module.exports = {
   yAxis : {
     title: "",
     showFirstLabel: false,
-    showLastLabel: false,
+    showLastLabel: true,
     gridLineWidth: 1,
     gridLineColor: 'rgba(0, 0, 0, 0.07)',
     tickLength: 25,
@@ -12637,7 +12406,8 @@ module.exports = {
       formatter: function () {
         return this.value.toFixed(5);
       }
-    }
+    },
+    events: {}
   },
 
   tooltip: {
@@ -12657,14 +12427,14 @@ module.exports = {
   }]
 };
 
-},{"../config.js":"/Users/akrasman/github/binomo/graphs/src/config/config.js"}],"/Users/akrasman/github/binomo/graphs/src/config/config.js":[function(require,module,exports){
+},{"../config.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/config/config.js"}],"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/config/config.js":[function(require,module,exports){
 var interact = require("./../../vendor/interact/interact.js");
 
 module.exports = {
   CHART: {
     XAXIS_TICK_INTERVAL: 2 * 60 * 1000,
     XAXIS_RIGHT_PADDING: 5 * 60 * 1000,
-    XAXIS_RANGE: 12 * 60 * 1000,
+    XAXIS_RANGE: 10 * 60 * 1000,
     TIMER_LINE_WIDTH: 50 * 1000,
     SECONDS_IN_CANDLE: 15 * 1000,
     RANGE_PRESETS: {
@@ -12680,12 +12450,13 @@ module.exports = {
     },
     ZOOM_COEF: 2,
     RANGE_PRESETS: {
-      minute: 60 * 1000,
+      tenMinute: 10 * 60 * 1000,
       hour: 60 * 60 * 1000,
       day: 24 * 60 * 60 * 1000,
       month: 30 * 24 * 60 * 60 * 1000,
       year: 365 * 24 * 60 * 60 * 1000,
-    }
+    },
+    TIMER_ACTIVE_BORDER: 60 * 1000
   },
 
   OPTIONS: {
@@ -12725,7 +12496,7 @@ module.exports = {
   }
 };
 
-},{"./../../vendor/interact/interact.js":"/Users/akrasman/github/binomo/graphs/vendor/interact/interact.js"}],"/Users/akrasman/github/binomo/graphs/src/js/ChartBase.js":[function(require,module,exports){
+},{"./../../vendor/interact/interact.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/vendor/interact/interact.js"}],"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/js/ChartBase.js":[function(require,module,exports){
 var _                   = require("./../../vendor/lodash/lodash.js");
 var CONFIG              = require('../config/config.js');
 var DEFAULT_OPTIONS     = require('../config/chart/default.js');
@@ -12737,7 +12508,7 @@ var ChartBase = function(options) {
   this.$el = $(this.el);
 
   this._configure(options);
-  this.render();
+  this._render();
 };
 
 ChartBase.prototype = {
@@ -12745,55 +12516,29 @@ ChartBase.prototype = {
     this.options = _.merge({}, DEFAULT_OPTIONS, AREA_OPTIONS);
   },
 
-  _initialize: function() {
-    _.bindAll(this, '_onScrollX', 'scrollToEnd', 'scrollLeft', 'scrollRight', 'zoomIn', 'zoomOut', '_applyRangePreset');
-
-    this.options.xAxis.events.setExtremes = this._onScrollX;
-    this.chart = new Highcharts.StockChart(this.options);
-
-    this.$scrollPanel.find('.scrollToEnd').on('click', this.scrollToEnd);
-    this.$scrollPanel.find('.scrollLeft').on('click', this.scrollLeft);
-    this.$scrollPanel.find('.scrollRight').on('click', this.scrollRight);
-    this.$scrollPanel.find('.zoomIn').on('click', this.zoomIn);
-    this.$scrollPanel.find('.zoomOut').on('click', this.zoomOut);
-    this.$rangePresets.on('click', this._applyRangePreset);
-
-    this.state = {
-      endSticked: true,
-      xRange: CONFIG.CHART.XAXIS_RANGE,
-      zoom: CONFIG.CHART.ZOOM
-    };
-  },
-
-  render: function() {
+  _render: function() {
     var self = this;
 
     this.$el.html(template()).ready(function() {
       self.options.chart.renderTo = self.$el.find('.b-embd-chart__graph__placeholder')[0];
-
-      self.$scrollPanel  = self.$el.find('.b-embd-chart__graph__scroll-panel');
-      self.$rangePresets = self.$el.find('.b-embd-chart__graph__ranges li');
 
       self._initialize();
       self.$el.trigger('ready');
     });
   },
 
-  addPoint: function(tick) {
-    this.chart.series[0].addPoint(tick, true, true);
-    this.updateLastTick(tick);
-  },
+  _initialize: function() {
+    _.bindAll(this, '_onXExtremesUpdate');
 
-  setData: function(data) {
-    this.chart.series[0].setData(data, true, true);
-    this.updateLastTick(data[data.length-1]);
+    this.options.xAxis.events.setExtremes = this._onXExtremesUpdate;
+    // this.options.yAxis.events.setExtremes = this._onYExtremesUpdate;
+    this.options.chart.events.redraw = this._onRedraw;
+    this.chart = new Highcharts.StockChart(this.options);
 
-    return this;
-  },
-
-  updateLastTick: function(tick) {
-    // this._updateYRange(tick);
-    this._setXAxisEndPadding();
+    this.state = {
+      endSticked: true,
+      xRange: CONFIG.CHART.XAXIS_RANGE
+    };
   },
 
   _getStartTime: function() {
@@ -12801,23 +12546,82 @@ ChartBase.prototype = {
   },
 
   _getEndTime: function() {
-    return this.chart.xAxis[0].options.max;
+    return this.chart.xAxis[0].getExtremes().dataMax + this.state.xRange/2;
   },
 
-  _onScrollX: function(e) {
-    if (e.trigger == 'navigator') {
-      this.state.endSticked = (e.max == this._getEndTime());
+  _onXExtremesUpdate: function(e) {
+    this.state.endSticked = (e.max == this._getEndTime());
+
+    this.emit('setExtremes', e);
+  },
+
+  _onYExtremesUpdate: function(e) {
+  },
+
+  _onRedraw: function(e) {
+  },
+
+  _updateYRange: function(tick) {
+    var extremes = {min: tick[1].toFixed(4), max: tick[1].toFixed(4)};
+    this.ySet(extremes);
+  },
+
+  _updateXTickInterval: function(range) {
+    this.xSet({tickInterval: +(CONFIG.CHART.XAXIS_TICK_INTERVAL*range/CONFIG.CHART.XAXIS_RANGE).toFixed(0)}, false, false);
+  },
+
+  _setXAxisEndPadding: function() {
+    var extremes = this.chart.xAxis[0].getExtremes();
+    var max, min,
+        x_data = this.chart.series[0].xData;
+
+    max = x_data[x_data.length-1] + this.state.xRange/2;
+    min = max - this.state.xRange;
+    min = min < x_data[0] ? x_data[0] : min;
+
+    if (max >= (this.xGet('max') || this._getEndTime())) {
+      // this.xSet({max: max});
+
+
+      if (this.state.endSticked) {
+        this.scrollToEnd();
+      }
     }
   },
 
-  _applyRangePreset: function(evt) {
-    var el = $(evt.target),
-        range = CONFIG.CHART.RANGE_PRESETS[el.attr('data-range')];
+  on: function(name, callback) {
+    this.$el.on.apply(this.$el, arguments);
+  },
 
-    this.$rangePresets.removeClass('active');
-    el.addClass('active');
+  emit: function(name, params) {
+    this.$el.trigger.apply(this.$el, arguments);
+  },
 
-    this.setRange(range);
+  addPoint: function(tick) {
+    this.chart.series[1].addPoint(tick, false, false);
+    this.chart.series[0].addPoint(tick, true, true);
+    this.updateLastTick();
+  },
+
+  setData: function(data) {
+    this.chart.series[1].setData(data, false, false);
+    this.chart.series[0].setData(data, true, true);
+    this.updateLastTick();
+
+    return this;
+  },
+
+  updateLastTick: function() {
+    // this._updateYRange(tick);
+    this._setXAxisEndPadding();
+  },
+
+  xGet: function(name) {
+    return this.chart.xAxis[0].options[name];
+  },
+
+  yGet: function(name) {
+    return this.chart.yAxis[0].options[name];
   },
 
   xSet: function(options, redraw) {
@@ -12832,16 +12636,11 @@ ChartBase.prototype = {
     return this;
   },
 
-  _updateYRange: function(tick) {
-    var extremes = {min: tick[1].toFixed(4), max: tick[1].toFixed(4)};
-    this.ySet(extremes);
-  },
-
   scrollTo: function(time) {
     var min = time < this._getStartTime() ? this._getStartTime() : time,
         max = min + this.state.xRange;
 
-    this.chart.xAxis[0].setExtremes(min, max);
+    this.chart.xAxis[0].setExtremes(min, max, true, true);
 
     return this;
   },
@@ -12870,50 +12669,40 @@ ChartBase.prototype = {
 
   setRange: function(range) {
     var extremes   = this.chart.xAxis[0].getExtremes(),
-        totalRange = extremes.dataMax - extremes.dataMin,
         currRange  = extremes.max - extremes.min,
         center     = extremes.min + currRange/2,
-        min        = Math.max(center-range/2, extremes.dataMin);
+        min        = center-range/2,
+        max        = min+range,
+        xOptions   = {};
+
+    if (min < extremes.dataMin) {
+      xOptions.min = min;
+    }
+
+    if (max > extremes.dataMax) {
+      xOptions.max = max;
+    }
+
+    if (xOptions.max || xOptions.min) {
+      this.xSet(xOptions);
+    }
 
     this.chart.xAxis[0].setExtremes(min, min+range, true, true);
-    this.xSet({tickInterval: +(CONFIG.CHART.XAXIS_TICK_INTERVAL*range/CONFIG.CHART.XAXIS_RANGE).toFixed(0)});
+    // this._updateXTickInterval(range);
     this.state.xRange = range;
 
     this.state.endSticked = false;
-  },
-
-  zoomIn: function() {
-    this.setRange(this.state.xRange/CONFIG.CHART.ZOOM_COEF);
-  },
-
-  zoomOut: function() {
-    this.setRange(this.state.xRange*CONFIG.CHART.ZOOM_COEF);
   },
 
   redraw: function() {
     try {
       this.chart.redraw();
     } catch(err) {
+      console.log(err);
       this.redraw();
     }
 
     return this;
-  },
-
-  _setXAxisEndPadding: function() {
-    var extremes = this.chart.xAxis[0].getExtremes();
-    var max, min,
-        x_data = this.chart.series[0].xData;
-
-    max = x_data[x_data.length-1] + CONFIG.CHART.XAXIS_RIGHT_PADDING;
-    min = max - this.state.xRange;
-    min = min < x_data[0] ? x_data[0] : min;
-
-    this.xSet({min: x_data[0], max: Math.max(max, extremes.max)});
-
-    if (this.state.endSticked) {
-      this.scrollToEnd();
-    }
   }
 };
 
@@ -12921,7 +12710,7 @@ ChartBase.prototype.constructor  = ChartBase;
 
 module.exports = ChartBase;
 
-},{"../config/chart/area.js":"/Users/akrasman/github/binomo/graphs/src/config/chart/area.js","../config/chart/default.js":"/Users/akrasman/github/binomo/graphs/src/config/chart/default.js","../config/config.js":"/Users/akrasman/github/binomo/graphs/src/config/config.js","../templates/graph_base.html":"/Users/akrasman/github/binomo/graphs/src/templates/graph_base.html","./../../vendor/lodash/lodash.js":"/Users/akrasman/github/binomo/graphs/vendor/lodash/lodash.js"}],"/Users/akrasman/github/binomo/graphs/src/js/ChartCandlestick.js":[function(require,module,exports){
+},{"../config/chart/area.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/config/chart/area.js","../config/chart/default.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/config/chart/default.js","../config/config.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/config/config.js","../templates/graph_base.html":"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/templates/graph_base.html","./../../vendor/lodash/lodash.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/vendor/lodash/lodash.js"}],"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/js/ChartCandlestick.js":[function(require,module,exports){
 var _                   = require("./../../vendor/lodash/lodash.js");
 var CONFIG              = require('../config/config.js');
 var DEFAULT_OPTIONS     = require('../config/chart/default.js');
@@ -12960,8 +12749,9 @@ ChartCandlestick.prototype.setData = function(data) {
     }
   }
 
+  this.chart.series[1].setData(candles, false, false);
   this.chart.series[0].setData(candles, true, true);
-  this.updateLastTick(tick);
+  this.updateLastTick();
 
   return this;
 };
@@ -12969,21 +12759,25 @@ ChartCandlestick.prototype.setData = function(data) {
 ChartCandlestick.prototype.addPoint = function(tick) {
   var point;
   candles       = this.chart.series[0].data,
+  candles_nav   = this.chart.series[1].data,
   candles_y     = this.chart.series[0].yData,
   curr_candle   = candles[candles.length - 1],
+  curr_candle_nav = candles_nav[candles.length - 1],
   curr_candle_y = candles_y[candles_y.length - 1] || [];
 
   if (this._isCurrCandleActual(tick[0])) {
-    point = this._addPointToCandle([curr_candle.x].concat(curr_candle_y), tick);
+    point     = this._addPointToCandle([curr_candle.x].concat(curr_candle_y), tick);
 
+    curr_candle_nav.update(point, true, true);
     curr_candle.update(point, true, true);
   } else {
     this.state.currCandleTime = tick[0];
     point = [tick[0], curr_candle_y[3] || tick[1], tick[1], tick[1], tick[1]];
+    this.chart.series[1].addPoint(point, true, true);
     this.chart.series[0].addPoint(point, true, true);
   }
 
-  this.updateLastTick(tick);
+  this.updateLastTick();
 
   return this;
 };
@@ -12998,32 +12792,32 @@ ChartCandlestick.prototype._addPointToCandle = function(candle, tick) {
 
 module.exports = ChartCandlestick;
 
-},{"../config/chart/candlestick.js":"/Users/akrasman/github/binomo/graphs/src/config/chart/candlestick.js","../config/chart/default.js":"/Users/akrasman/github/binomo/graphs/src/config/chart/default.js","../config/config.js":"/Users/akrasman/github/binomo/graphs/src/config/config.js","../templates/graph_base.html":"/Users/akrasman/github/binomo/graphs/src/templates/graph_base.html","./../../vendor/lodash/lodash.js":"/Users/akrasman/github/binomo/graphs/vendor/lodash/lodash.js","./ChartBase.js":"/Users/akrasman/github/binomo/graphs/src/js/ChartBase.js"}],"/Users/akrasman/github/binomo/graphs/src/templates/graph_base.html":[function(require,module,exports){
+},{"../config/chart/candlestick.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/config/chart/candlestick.js","../config/chart/default.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/config/chart/default.js","../config/config.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/config/config.js","../templates/graph_base.html":"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/templates/graph_base.html","./../../vendor/lodash/lodash.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/vendor/lodash/lodash.js","./ChartBase.js":"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/js/ChartBase.js"}],"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/templates/graph_base.html":[function(require,module,exports){
 var _ = require('lodash');
 module.exports = function(obj){
 var __t,__p='',__j=Array.prototype.join,print=function(){__p+=__j.call(arguments,'');};
 with(obj||{}){
-__p+='<div class="b-embd-chart__graph__placeholder"></div><div class="b-embd-chart__graph__scroll-panel"><i class="b-embd-icon b-embd-icon-i-graphs-scroll-left scrollLeft"></i> <i class="b-embd-icon b-embd-icon-i-graphs-plus zoomIn"></i> <i class="b-embd-icon b-embd-icon-i-graphs-minus zoomOut"></i> <i class="b-embd-icon b-embd-icon-i-graphs-scroll-right scrollRight"></i> <i class="b-embd-icon b-embd-icon-i-graphs-scroll-end scrollToEnd"></i></div><ul class="b-embd-chart__graph__ranges"><li data-range="minute">1 мин</li><li data-range="hour">1 час</li><li data-range="day">1 день</li><li data-range="month">1 мес</li><li data-range="year">1 год</li></ul>';
+__p+='<div class="b-embd-chart__graph__placeholder"></div>';
 }
 return __p;
 };
 
-},{"lodash":"/Users/akrasman/github/binomo/graphs/node_modules/lodash/index.js"}],"/Users/akrasman/github/binomo/graphs/src/templates/graphs.html":[function(require,module,exports){
+},{"lodash":"/Users/akrasman/Dropbox/Projects/binomo/graphs/node_modules/lodash/index.js"}],"/Users/akrasman/Dropbox/Projects/binomo/graphs/src/templates/graphs.html":[function(require,module,exports){
 var _ = require('lodash');
 module.exports = function(obj){
 var __t,__p='',__j=Array.prototype.join,print=function(){__p+=__j.call(arguments,'');};
 with(obj||{}){
-__p+='<div class="b-embd-chart candlestick"><span class="b-embd-chart__timer"></span><div class="b-embd-chart__graph b-embd-chart__graph_area"></div><div class="b-embd-chart__graph b-embd-chart__graph_candlestick"></div><span class="b-embd-chart__split-resize"><i class="b-embd-icon b-embd-icon-i-graphs-split-resize"></i></span><div class="b-embd-chart__value"><span class="b-embd-chart__value__t"></span></div><ul class="b-embd-chart__menu"><li class="area" mode="area"><i class="b-embd-icon b-embd-icon-i-graphs-area"></i></li><li class="candlestick" mode="candlestick"><i class="b-embd-icon b-embd-icon-i-graphs-candlestick"></i></li><li class="split" mode="split">Split</li><li class="unsplit" mode="area">Unsplit</li><li class="settings" mode="settings"><i class="b-embd-icon b-embd-icon-i-graphs-settings"></i></li></ul></div>';
+__p+='<div class="b-embd-chart candlestick"><span class="b-embd-chart__timer"><p class="b-embd-chart__timer__value">00:00:00</p><p class="b-embd-chart__timer__t">Время до покупки</p></span><div class="b-embd-chart__graph b-embd-chart__graph_area"></div><div class="b-embd-chart__graph b-embd-chart__graph_candlestick"></div><span class="b-embd-chart__split-resize"><i class="b-embd-icon b-embd-icon-i-graphs-split-resize"></i></span><div class="b-embd-chart__value"><span class="b-embd-chart__value__t"><span class="prediction"></span><div class="b-embd-chart__value__tooltip"><i class="tail"></i><p class="t prediction">86%</p>трейдеров считают что цена пойдет <span class="up">вверх</span><span class="down">вниз</span></div></span></div><ul class="b-embd-chart__menu"><li class="settings" mode="settings"><i class="b-embd-icon b-embd-icon-i-graphs-settings"></i></li><li class="area" mode="area"><i class="b-embd-icon b-embd-icon-i-graphs-area"></i></li><li class="candlestick" mode="candlestick"><i class="b-embd-icon b-embd-icon-i-graphs-candlestick"></i></li></ul><div class="b-embd-chart__scroll-panel"><i class="b-embd-icon b-embd-icon-i-graphs-scroll-left scrollLeft"></i> <i class="b-embd-icon b-embd-icon-i-graphs-plus zoomIn"></i> <i class="b-embd-icon b-embd-icon-i-graphs-minus zoomOut"></i> <i class="b-embd-icon b-embd-icon-i-graphs-scroll-right scrollRight"></i> <i class="b-embd-icon b-embd-icon-i-graphs-scroll-end scrollToEnd"></i></div><ul class="b-embd-chart__ranges"><li class="active" data-range="tenMinute">10 мин</li><li data-range="hour">1 час</li><li data-range="day">1 день</li><li data-range="month">1 мес</li><li data-range="year">1 год</li></ul></div>';
 }
 return __p;
 };
 
-},{"lodash":"/Users/akrasman/github/binomo/graphs/node_modules/lodash/index.js"}],"/Users/akrasman/github/binomo/graphs/vendor/highstock-release/highstock.src.js":[function(require,module,exports){
+},{"lodash":"/Users/akrasman/Dropbox/Projects/binomo/graphs/node_modules/lodash/index.js"}],"/Users/akrasman/Dropbox/Projects/binomo/graphs/vendor/highstock-release/highstock.src.js":[function(require,module,exports){
 // ==ClosureCompiler==
 // @compilation_level SIMPLE_OPTIMIZATIONS
 
 /**
- * @license Highstock JS v2.1.5 (2015-04-13)
+ * @license Highstock JS v2.1.4 (2015-03-10)
  *
  * (c) 2009-2014 Torstein Honsi
  *
@@ -13077,7 +12871,7 @@ var UNDEFINED,
 	charts = [],
 	chartCount = 0,
 	PRODUCT = 'Highstock',
-	VERSION = '2.1.5',
+	VERSION = '2.1.4',
 
 	// some constants for frequently used strings
 	DIV = 'div',
@@ -13113,8 +12907,6 @@ var UNDEFINED,
 	getDate,
 	getMonth,
 	getFullYear,
-	setMilliseconds,
-	setSeconds,
 	setMinutes,
 	setHours,
 	setDate,
@@ -14282,8 +14074,8 @@ defaultOptions = {
 	global: {
 		useUTC: true,
 		//timezoneOffset: 0,
-		canvasToolsURL: 'http://code.highcharts.com/stock/2.1.5/modules/canvas-tools.js',
-		VMLRadialGradientURL: 'http://code.highcharts.com/stock/2.1.5/gfx/vml-radial-gradient.png'
+		canvasToolsURL: 'http://code.highcharts.com/stock/2.1.4/modules/canvas-tools.js',
+		VMLRadialGradientURL: 'http://code.highcharts.com/stock/2.1.4/gfx/vml-radial-gradient.png'
 	},
 	chart: {
 		//animation: true,
@@ -14636,19 +14428,17 @@ function setTimeMethods() {
 		}
 		return d;
 	};
-	getMinutes =      GET + 'Minutes';
-	getHours =        GET + 'Hours';
-	getDay =          GET + 'Day';
-	getDate =         GET + 'Date';
-	getMonth =        GET + 'Month';
-	getFullYear =     GET + 'FullYear';
-	setMilliseconds = SET + 'Milliseconds';
-	setSeconds =      SET + 'Seconds';
-	setMinutes =      SET + 'Minutes';
-	setHours =        SET + 'Hours';
-	setDate =         SET + 'Date';
-	setMonth =        SET + 'Month';
-	setFullYear =     SET + 'FullYear';
+	getMinutes =  GET + 'Minutes';
+	getHours =    GET + 'Hours';
+	getDay =      GET + 'Day';
+	getDate =     GET + 'Date';
+	getMonth =    GET + 'Month';
+	getFullYear = GET + 'FullYear';
+	setMinutes =  SET + 'Minutes';
+	setHours =    SET + 'Hours';
+	setDate =     SET + 'Date';
+	setMonth =    SET + 'Month';
+	setFullYear = SET + 'FullYear';
 
 }
 
@@ -14809,7 +14599,7 @@ SVGElement.prototype = {
 	// Default base for animation
 	opacity: 1,
 	// For labels, these CSS properties are applied to the <text> node directly
-	textProps: ['fontSize', 'fontWeight', 'fontFamily', 'fontStyle', 'color', 
+	textProps: ['fontSize', 'fontWeight', 'fontFamily', 'color', 
 		'lineHeight', 'width', 'textDecoration', 'textShadow'],
 	
 	/**
@@ -18937,10 +18727,7 @@ Tick.prototype = {
 				label.attr({ align: 'right' });
 			}
 
-			// If the label width exceeds the available space, set a text width to be 
-			// picked up below. Also, if a width has been set before, we need to set a new
-			// one because the reported labelWidth will be limited by the box (#3938).
-			if (labelWidth > slotWidth || (axis.autoRotation && label.styles.width)) {
+			if (labelWidth > slotWidth) {
 				textWidth = slotWidth;
 			}
 		
@@ -20918,7 +20705,7 @@ Axis.prototype = {
 		if (horiz) {
 			autoRotation = defined(rotationOption) ? 
 				[rotationOption] :
-				slotSize < pick(labelOptions.autoRotationLimit, 80) && !labelOptions.staggerLines && !labelOptions.step && labelOptions.autoRotation;
+				slotSize < 80 && !labelOptions.staggerLines && !labelOptions.step && labelOptions.autoRotation;
 
 			if (autoRotation) {
 
@@ -21007,11 +20794,7 @@ Axis.prototype = {
 				pos = tickPositions[i];
 				label = ticks[pos].label;
 				if (label) {
-					// Reset ellipsis in order to get the correct bounding box (#4070)
-					if (label.styles.textOverflow === 'ellipsis') {
-						label.css({ textOverflow: 'clip' });
-					}
-					if (label.getBBox().height > this.len / tickPositions.length - (labelMetrics.h - labelMetrics.f)) {
+					if (this.len / tickPositions.length - 4 < label.getBBox().height) {
 						label.specCss = { textOverflow: 'ellipsis' };
 					}
 				}
@@ -21613,11 +21396,11 @@ Axis.prototype.getTimeTicks = function (normalizedInterval, min, max, startOfWee
 		count = normalizedInterval.count;
 
 	if (defined(min)) { // #1300
-		minDate[setMilliseconds](interval >= timeUnits.second ? 0 : // #3935
+		minDate.setMilliseconds(interval >= timeUnits.second ? 0 :
 			count * mathFloor(minDate.getMilliseconds() / count)); // #3652, #3654
 
 		if (interval >= timeUnits.second) { // second
-			minDate[setSeconds](interval >= timeUnits.minute ? 0 : // #3935
+			minDate.setSeconds(interval >= timeUnits.minute ? 0 :
 				count * mathFloor(minDate.getSeconds() / count));
 		}
 	
@@ -22097,7 +21880,6 @@ Tooltip.prototype = {
 		var chart = this.chart,
 			distance = this.distance,
 			ret = {},
-			h = point.h,
 			swapped,
 			first = ['y', chart.chartHeight, boxHeight, point.plotY + chart.plotTop],
 			second = ['x', chart.chartWidth, boxWidth, point.plotX + chart.plotLeft],
@@ -22118,9 +21900,9 @@ Tooltip.prototype = {
 				} else if (!preferFarSide && roomLeft) {
 					ret[dim] = alignedLeft;
 				} else if (roomLeft) {
-					ret[dim] = alignedLeft - h < 0 ? alignedLeft : alignedLeft - h;
+					ret[dim] = alignedLeft;
 				} else if (roomRight) {
-					ret[dim] = alignedRight + h + innerSize > outerSize ? alignedRight : alignedRight + h;
+					ret[dim] = alignedRight;
 				} else {
 					return false;
 				}
@@ -22286,13 +22068,8 @@ Tooltip.prototype = {
 			label.attr({
 				stroke: borderColor
 			});
-			tooltip.updatePosition({ 
-				plotX: x, 
-				plotY: y, 
-				negative: point.negative, 
-				ttBelow: point.ttBelow, 
-				h: (point.shapeArgs && point.shapeArgs.height) || 0
-			});
+			
+			tooltip.updatePosition({ plotX: x, plotY: y, negative: point.negative, ttBelow: point.ttBelow });
 		
 			this.isHidden = false;
 		}
@@ -22558,6 +22335,8 @@ Pointer.prototype = {
 			hoverPoint = chart.hoverPoint,
 			hoverSeries = chart.hoverSeries,
 			i,
+			trueXkd,
+			trueX,
 			//j,
 			distance = chart.chartWidth,
 			rdistance = chart.chartWidth,
@@ -22577,13 +22356,8 @@ Pointer.prototype = {
 			}
 		}
 
-		// If it has a hoverPoint and that series requires direct touch (like columns), 
-		// use the hoverPoint (#3899). Otherwise, search the k-d tree.	
-		if (!shared && hoverSeries && hoverSeries.directTouch && hoverPoint) {
-			kdpoint = hoverPoint;
-
 		// Handle shared tooltip or cases where a series is not yet hovered
-		} else {
+		if (!(hoverSeries && hoverSeries.noSharedTooltip) && (shared || !hoverSeries)) { // #3821 
 			// Find nearest points on all series
 			each(series, function (s) {
 				// Skip hidden series
@@ -22598,14 +22372,19 @@ Pointer.prototype = {
 			// Find absolute nearest point
 			each(kdpoints, function (p) {
 				if (p && defined(p.plotX) && defined(p.plotY)) {
-					if ((p.dist.distX < distance) || ((p.dist.distX === distance || p.series.kdDimensions > 1) && 
-							p.dist.distR < rdistance)) {
+					if ((p.dist.distX < distance) || ((p.dist.distX === distance || p.series.kdDimensions > 1) && p.dist.distR < rdistance)) {
 						distance = p.dist.distX;
 						rdistance = p.dist.distR;
 						kdpoint = p;
 					}
 				}
-			});
+			});	
+
+		// Handle non-shared tooltips
+		} else {
+			// If it has a hoverPoint and that series requires direct touch (like columns), use the hoverPoint (#3899).
+			// Otherwise, search the k-d tree (like scatter).
+			kdpoint = (hoverSeries.directTouch && hoverPoint) || (hoverSeries && hoverSeries.searchPoint(e));
 		}
 
 		// Refresh tooltip for kdpoint if new hover point or tooltip was hidden // #3926
@@ -22613,8 +22392,10 @@ Pointer.prototype = {
 			// Draw tooltip if necessary
 			if (shared && !kdpoint.series.noSharedTooltip) {
 				i = kdpoints.length;
+				trueXkd = kdpoint.clientX;
 				while (i--) {
-					if (kdpoints[i].clientX !== kdpoint.clientX || kdpoints[i].series.noSharedTooltip) {
+					trueX = kdpoints[i].clientX;
+					if (kdpoints[i].x !== kdpoint.x || trueX !== trueXkd || (kdpoints[i].series.noSharedTooltip || false)) {
 						kdpoints.splice(i, 1);
 					}
 				}
@@ -22627,9 +22408,8 @@ Pointer.prototype = {
 					if (point !== kdpoint) { 
 						point.onMouseOver(e);
 					}
-				});	
-				// #3919, #3985 do mouseover on the closest point last to ensure it is the hoverpoint
-				((hoverSeries && hoverSeries.directTouch && hoverPoint) || kdpoint).onMouseOver(e); 
+				});				
+				kdpoint.onMouseOver(e); // #3919 do mouseover on the closest point last to ensure it is the hoverpoint
 			} else {
 				if (tooltip) { 
 					tooltip.refresh(kdpoint, e);
@@ -23383,7 +23163,7 @@ if (win.PointerEvent || win.MSPointerEvent) {
 			});
 		},
 		onDocumentPointerUp: function (e) {
-			translateMSPointer(e, 'onDocumentTouchEnd', 'touchend', function (e) {
+			translateMSPointer(e, 'onContainerTouchEnd', 'touchend', function (e) {
 				delete touches[e.pointerId];
 			});
 		},
@@ -23401,7 +23181,7 @@ if (win.PointerEvent || win.MSPointerEvent) {
 	// Disable default IE actions for pinch and such on chart element
 	wrap(Pointer.prototype, 'init', function (proceed, chart, options) {
 		proceed.call(this, chart, options);
-		if (this.hasZoom) { // #4014
+		if (this.hasZoom || this.followTouchMove) {
 			css(chart.container, {
 				'-ms-touch-action': NONE,
 				'touch-action': NONE
@@ -23692,8 +23472,7 @@ Legend.prototype = {
 
 			// Get the baseline for the first item - the font size is equal for all
 			if (!legend.baseline) {
-				legend.fontMetrics = renderer.fontMetrics(itemStyle.fontSize, li);
-				legend.baseline = legend.fontMetrics.f + 3 + itemMarginTop;
+				legend.baseline = renderer.fontMetrics(itemStyle.fontSize, li).f + 3 + itemMarginTop;
 				li.attr('y', legend.baseline);
 			}
 
@@ -23727,7 +23506,6 @@ Legend.prototype = {
 				(widthOption || (chart.chartWidth - 2 * padding - initialItemX - options.x))) {
 			legend.itemX = initialItemX;
 			legend.itemY += itemMarginTop + legend.lastLineHeight + itemMarginBottom;
-			legend.lastLineHeight = 0; // reset for next line (#915, #3976)
 		}
 
 		// If the item exceeds the height, start a new column
@@ -24131,11 +23909,11 @@ var LegendSymbolMixin = Highcharts.LegendSymbolMixin = {
 	 * @param {Object} item The series (this) or point
 	 */
 	drawRectangle: function (legend, item) {
-		var symbolHeight = legend.options.symbolHeight || legend.fontMetrics.f;
-
+		var symbolHeight = legend.options.symbolHeight || 12;
+		
 		item.legendSymbol = this.chart.renderer.rect(
 			0,
-			legend.baseline - symbolHeight + 1, // #3988
+			legend.baseline - 5 - (symbolHeight / 2),
 			legend.symbolWidth,
 			symbolHeight,
 			legend.options.symbolRadius || 0
@@ -24156,11 +23934,12 @@ var LegendSymbolMixin = Highcharts.LegendSymbolMixin = {
 		var options = this.options,
 			markerOptions = options.marker,
 			radius,
+			legendOptions = legend.options,
 			legendSymbol,
 			symbolWidth = legend.symbolWidth,
 			renderer = this.chart.renderer,
 			legendItemGroup = this.legendGroup,
-			verticalCenter = legend.baseline - mathRound(legend.fontMetrics.b * 0.3),
+			verticalCenter = legend.baseline - mathRound(renderer.fontMetrics(legendOptions.itemStyle.fontSize, this.legendItem).b * 0.3),
 			attr;
 
 		// Draw the line
@@ -25401,7 +25180,7 @@ Chart.prototype = {
 		chart.getAxisMargins();
 
 		// If the plot area size has changed significantly, calculate tick positions again
-		redoHorizontal = tempWidth / chart.plotWidth > 1.1;
+		redoHorizontal = tempWidth / chart.plotWidth > 1.2;
 		redoVertical = tempHeight / chart.plotHeight > 1.1;
 
 		if (redoHorizontal || redoVertical) {
@@ -25749,8 +25528,7 @@ Point.prototype = {
 	optionsToObject: function (options) {
 		var ret = {},
 			series = this.series,
-			keys = series.options.keys, // docs: http://jsfiddle.net/ch4v7n8v/1
-			pointArrayMap = keys || series.pointArrayMap || ['y'],
+			pointArrayMap = series.pointArrayMap || ['y'],
 			valueCount = pointArrayMap.length,
 			firstItemType,
 			i = 0,
@@ -25761,7 +25539,7 @@ Point.prototype = {
 
 		} else if (isArray(options)) {
 			// with leading x value
-			if (!keys && options.length > valueCount) {
+			if (options.length > valueCount) {
 				firstItemType = typeof options[0];
 				if (firstItemType === 'string') {
 					ret.name = options[0];
@@ -26596,6 +26374,8 @@ Series.prototype = {
 			xMax = xExtremes.max,
 			validValue,
 			withinRange,
+			dataMin,
+			dataMax,
 			x,
 			y,
 			i,
@@ -26629,8 +26409,8 @@ Series.prototype = {
 				}
 			}
 		}
-		this.dataMin = arrayMin(activeYData);
-		this.dataMax = arrayMax(activeYData);
+		this.dataMin = pick(dataMin, arrayMin(activeYData));
+		this.dataMax = pick(dataMax, arrayMax(activeYData));
 	},
 
 	/**
@@ -26786,7 +26566,7 @@ Series.prototype = {
 			this.sharedClipKey = sharedClipKey;
 		}
 
-		// Remove the shared clipping rectangle when all series are shown
+		// Remove the shared clipping rectancgle when all series are shown
 		if (!animation) {
 			clipRect.count -= 1;
 			if (clipRect.count <= 0 && sharedClipKey && chart[sharedClipKey]) {
@@ -27083,10 +26863,6 @@ Series.prototype = {
 					if (!defaultLineColor) {
 						attr.lineColor = point.color; // Bubbles take point color, line markers use white
 					}
-					// Color is explicitly set to null or undefined (#1288, #4068)
-					if (normalOptions.hasOwnProperty('color') && !normalOptions.color) {
-						delete normalOptions.color;
-					}
 					pointAttr[NORMAL_STATE] = series.convertAttribs(extend(attr, normalOptions), seriesPointAttr[NORMAL_STATE]);
 
 					// inherit from point normal and series hover
@@ -27162,9 +26938,10 @@ Series.prototype = {
 		// Clear the animation timeout if we are destroying the series during initial animation
 		clearTimeout(series.animationTimeout);
 
-		// Destroy all SVGElements associated to the series
-		for (prop in series) {
-			if (series[prop] instanceof SVGElement && !series[prop].survive) { // Survive provides a hook for not destroying
+		// destroy all SVGElements associated to the series
+		each(['area', 'graph', 'dataLabelsGroup', 'group', 'markerGroup', 'tracker',
+				'graphNeg', 'areaNeg', 'posClip', 'negClip'], function (prop) {
+			if (series[prop]) {
 
 				// issue 134 workaround
 				destroy = issue134 && prop === 'group' ?
@@ -27173,7 +26950,7 @@ Series.prototype = {
 
 				series[prop][destroy]();
 			}
-		}
+		});
 
 		// remove from hoverSeries
 		if (chart.hoverSeries === series) {
@@ -27290,7 +27067,7 @@ Series.prototype = {
 			zones = this.zones;
 
 		each(zones, function (threshold, i) {
-			props.push(['zoneGraph' + i, threshold.color || series.color, threshold.dashStyle || options.dashStyle]);
+			props.push(['colorGraph' + i, threshold.color || series.color, threshold.dashStyle || options.dashStyle]);
 		});
 		
 		// Draw the graph
@@ -27348,23 +27125,13 @@ Series.prototype = {
 		if (zones.length && (graph || area)) {
 			// The use of the Color Threshold assumes there are no gaps
 			// so it is safe to hide the original graph and area
-			if (graph) {
-				graph.hide();
-			}
-			if (area) { 
-				area.hide(); 
-			}
+			graph.hide();
+			if (area) { area.hide(); }
 
 			// Create the clips
 			each(zones, function (threshold, i) {
 				translatedFrom = pick(translatedTo, (reversed ? (horiz ? chart.plotWidth : 0) : (horiz ? 0 : axis.toPixels(axis.min))));
 				translatedTo = mathRound(axis.toPixels(pick(threshold.value, axis.max), true));
-
-				if (axis.isXAxis) {
-					translatedFrom = translatedFrom > translatedTo ? translatedTo : translatedFrom; //#4006 from should be less or equal then to
-				} else {
-					translatedFrom = translatedFrom < translatedTo ? translatedTo : translatedFrom; //#4006 from should be less or equal then to
-				}
 
 				if (ignoreZones) {
 					translatedFrom = translatedTo = axis.toPixels(axis.max);
@@ -27417,12 +27184,10 @@ Series.prototype = {
 				} else {
 					clips[i] = renderer.clipRect(clipAttr);
 
-					if (graph) {
-						series['zoneGraph' + i].clip(clips[i]);
-					}
+					series['colorGraph' + i].clip(clips[i]);
 
 					if (area) {
-						series['zoneArea' + i].clip(clips[i]);
+						series['colorArea' + i].clip(clips[i]);
 					}
 				}
 				// if this zone extends out of the axis, ignore the others
@@ -27661,7 +27426,7 @@ Series.prototype = {
 
 	kdDimensions: 1,
 	kdTree: null,
-	kdAxisArray: ['clientX', 'plotY'],
+	kdAxisArray: ['plotX', 'plotY'],
 	kdComparer: 'distX',
 
 	searchPoint: function (e) {
@@ -27670,10 +27435,10 @@ Series.prototype = {
 			yAxis = series.yAxis,
 			inverted = series.chart.inverted;
 		
-		return this.searchKDTree({
-			clientX: inverted ? xAxis.len - e.chartY + xAxis.pos : e.chartX - xAxis.pos,
-			plotY: inverted ? yAxis.len - e.chartX + yAxis.pos : e.chartY - yAxis.pos
-		});
+		e.plotX = inverted ? xAxis.len - e.chartY + xAxis.pos : e.chartX - xAxis.pos;
+		e.plotY = inverted ? yAxis.len - e.chartX + yAxis.pos : e.chartY - yAxis.pos;
+
+		return this.searchKDTree(e);
 	},
 
 	buildKDTree: function () {
@@ -27866,8 +27631,7 @@ StackItem.prototype = {
 			axis = stackItem.axis,
 			chart = axis.chart,
 			inverted = chart.inverted,
-			reversed = axis.reversed,
-			neg = (this.isNegative && !reversed) || (!this.isNegative && reversed), // #4056
+			neg = this.isNegative,							// special treatment is needed for negative stacks
 			y = axis.translate(axis.usePercentage ? 100 : this.total, 0, 0, 0, 1), // stack value translated mapped to chart coordinates
 			yZero = axis.translate(0),						// stack origin
 			h = mathAbs(y - yZero),							// stack height
@@ -28324,25 +28088,20 @@ extend(Series.prototype, {
 			chart = series.chart,
 			names = series.xAxis && series.xAxis.names,
 			currentShift = (graph && graph.shift) || 0,
-			shiftShapes = ['graph', 'area'],
 			dataOptions = seriesOptions.data,
 			point,
 			isInTheMiddle,
 			xData = series.xData,
-			i,
-			x;
+			x,
+			i;
 
 		setAnimation(animation, chart);
 
 		// Make graph animate sideways
 		if (shift) {
-			i = series.zones.length;
-			while (i--) {
-				shiftShapes.push('zoneGraph' + i, 'zoneArea' + i);
-			}
-			each(shiftShapes, function (shape) {
-				if (series[shape]) {
-					series[shape].shift = currentShift + 1;
+			each([graph, area, series.graphNeg, series.areaNeg], function (shape) {
+				if (shape) {
+					shape.shift = currentShift + 1;
 				}
 			});
 		}
@@ -28800,7 +28559,7 @@ var AreaSeries = extendClass(Series, {
 			props = [['area', this.color, options.fillColor]]; // area name, main color, fill color
 		
 		each(zones, function (threshold, i) {
-			props.push(['zoneArea' + i, threshold.color || series.color, threshold.fillColor || options.fillColor]);
+			props.push(['colorArea' + i, threshold.color || series.color, threshold.fillColor || options.fillColor]);
 		});
 		each(props, function (prop) {
 			var areaKey = prop[0],
@@ -29139,11 +28898,8 @@ var ColumnSeries = extendClass(Series, {
 			xCrisp = -(borderWidth % 2 ? 0.5 : 0),
 			yCrisp = borderWidth % 2 ? 0.5 : 1;
 
-		if (chart.inverted) {
-			translatedThreshold -= 0.5; // #3355
-			if (chart.renderer.isVML) {
-				yCrisp += 1;
-			}
+		if (chart.renderer.isVML && chart.inverted) {
+			yCrisp += 1;
 		}
 
 		// When the pointPadding is 0, we want the columns to be packed tightly, so we allow individual
@@ -29165,18 +28921,16 @@ var ColumnSeries = extendClass(Series, {
 				right,
 				bottom,
 				fromTop,
-				up,
 				barH = mathMax(plotY, yBottom) - barY;
 
 			// Handle options.minPointLength
 			if (mathAbs(barH) < minPointLength) {
 				if (minPointLength) {
 					barH = minPointLength;
-					up = (!yAxis.reversed && !point.negative) || (yAxis.reversed && point.negative);
 					barY =
 						mathRound(mathAbs(barY - translatedThreshold) > minPointLength ? // stacked
 							yBottom - minPointLength : // keep position
-							translatedThreshold - (up ? minPointLength : 0)); // #1485, #4051
+							translatedThreshold - (yAxis.translate(point.y, 0, 1, 0, 1) <= translatedThreshold ? minPointLength : 0)); // use exact yAxis.translation (#1485)
 				}
 			}
 
@@ -29458,42 +29212,38 @@ var PiePoint = extendClass(Point, {
 	 * @param {Boolean} vis Whether to show the slice or not. If undefined, the
 	 *    visibility is toggled
 	 */
-	setVisible: function (vis, force) {
+	setVisible: function (vis) {
 		var point = this,
 			series = point.series,
 			chart = series.chart,
 			doRedraw = !series.isDirty && series.options.ignoreHiddenPoint;
 
-		// Only if the value has changed
-		if (vis !== point.visible || force) {
-			
-			// If called without an argument, toggle visibility
-			point.visible = point.options.visible = vis = vis === UNDEFINED ? !point.visible : vis;
-			series.options.data[inArray(point, series.data)] = point.options; // update userOptions.data
+		// if called without an argument, toggle visibility
+		point.visible = point.options.visible = vis = vis === UNDEFINED ? !point.visible : vis;
+		series.options.data[inArray(point, series.data)] = point.options; // update userOptions.data
 
-			// Show and hide associated elements
-			each(['graphic', 'dataLabel', 'connector', 'shadowGroup'], function (key) {
-				if (point[key]) {
-					point[key][vis ? 'show' : 'hide'](true);
-				}
-			});
-
-			if (point.legendItem) {
-				if (chart.hasRendered) {
-					series.updateTotals();
-					chart.legend.clearItems();
-					if (!doRedraw) {
-						chart.legend.render();
-					}
-				}
-				chart.legend.colorizeItem(point, vis);
+		// Show and hide associated elements
+		each(['graphic', 'dataLabel', 'connector', 'shadowGroup'], function (key) {
+			if (point[key]) {
+				point[key][vis ? 'show' : 'hide'](true);
 			}
+		});
 
-			// Handle ignore hidden slices
-			if (doRedraw) {
-				series.isDirty = true;
-				chart.redraw();
+		if (point.legendItem) {
+			if (chart.hasRendered) {
+				series.updateTotals();
+				chart.legend.clearItems();
+				if (!doRedraw) {
+					chart.legend.render();
+				}
 			}
+			chart.legend.colorizeItem(point, vis);
+		}
+
+		// Handle ignore hidden slices
+		if (doRedraw) {
+			series.isDirty = true;
+			chart.redraw();
 		}
 	},
 
@@ -29580,7 +29330,7 @@ var PieSeries = {
 				if (graphic) {
 					// start values
 					graphic.attr({
-						r: point.startR || (series.center[3] / 2), // animate from inner radius (#779)
+						r: series.center[3] / 2, // animate from inner radius (#779)
 						start: startAngleRad,
 						end: startAngleRad
 					});
@@ -29792,9 +29542,6 @@ var PieSeries = {
 
 		// draw the slices
 		each(series.points, function (point) {
-
-			var visible = point.options.visible;
-
 			graphic = point.graphic;
 			shapeArgs = point.shapeArgs;
 			shadowGroup = point.shadowGroup;
@@ -29834,9 +29581,9 @@ var PieSeries = {
 					.shadow(shadow, shadowGroup);	
 			}
 
-			// Detect point specific visibility (#2430)
-			if (visible !== undefined) {
-				point.setVisible(visible, true);
+			// detect point specific visibility (#2430)
+			if (point.visible !== undefined) {
+				point.setVisible(point.visible);
 			}
 
 		});
@@ -30370,7 +30117,7 @@ if (seriesTypes.pie) {
 				point = points[j];
 				labelPos = point.labelPos;
 				dataLabel = point.dataLabel;
-				visibility = point.visible === false ? HIDDEN : 'inherit';
+				visibility = point.visible === false ? HIDDEN : VISIBLE;
 				naturalY = labelPos[1];
 
 				if (distanceOption > 0) {
@@ -30391,7 +30138,6 @@ if (seriesTypes.pie) {
 
 				// get the x - use the natural x position for first and last slot, to prevent the top
 				// and botton slice connectors from touching each other on either side
-				// Problem: Should check that it makes sense - http://jsfiddle.net/highcharts/n1y6ngxz/
 				x = options.justify ?
 					seriesCenter[0] + (i ? -1 : 1) * (radius + distanceOption) :
 					series.getX(y === centerY - radius - distanceOption || y === centerY + radius + distanceOption ? naturalY : y, i);
@@ -30634,7 +30380,7 @@ if (seriesTypes.column) {
 
 
 /**
- * Highstock JS v2.1.5 (2015-04-13)
+ * Highstock JS v2.1.4 (2015-03-10)
  * Highcharts module to hide overlapping data labels. This module is included by default in Highmaps.
  *
  * (c) 2010-2014 Torstein Honsi
@@ -31402,10 +31148,10 @@ extend(Series.prototype, {
 		var series = this,
 			options = series.options,
 			graph = series.graph,
+			graphNeg = series.graphNeg,
 			stateOptions = options.states,
 			lineWidth = options.lineWidth,
-			attribs,
-			i = 0;
+			attribs;
 
 		state = state || NORMAL_STATE;
 
@@ -31417,7 +31163,7 @@ extend(Series.prototype, {
 			}
 
 			if (state) {
-				lineWidth = stateOptions[state].lineWidth || lineWidth + (stateOptions[state].lineWidthPlus || 0); // #4035
+				lineWidth = (stateOptions[state].lineWidth || lineWidth) + (stateOptions[state].lineWidthPlus || 0);
 			}
 
 			if (graph && !graph.dashstyle) { // hover is turned off for dashed lines in VML
@@ -31426,9 +31172,8 @@ extend(Series.prototype, {
 				};
 				// use attr because animate will cause any other animation on the graph to stop
 				graph.attr(attribs);
-				while (series['zoneGraph' + i]) {
-					series['zoneGraph' + i].attr(attribs);
-					i = i + 1;
+				if (graphNeg) {
+					graphNeg.attr(attribs);
 				}
 			}
 		}
@@ -32192,7 +31937,7 @@ wrap(Series.prototype, 'getSegments', function (proceed) {
  * End ordinal axis logic                                                   *
  *****************************************************************************/
 /**
- * Highstock JS v2.1.5 (2015-04-13)
+ * Highstock JS v2.1.4 (2015-03-10)
  * Highcharts Broken Axis module
  * 
  * Author: Stephane Vanraes, Torstein Honsi
@@ -33032,35 +32777,6 @@ Axis.prototype.getGroupPixelWidth = function () {
 	}
 
 	return doGrouping ? groupPixelWidth : 0;
-};
-
-/**
- * Force data grouping on all the axis' series.
- */
-Axis.prototype.setDataGrouping = function (dataGrouping, redraw) { // docs
-	redraw = pick(redraw, true);
-
-	if (!dataGrouping) {   
-		dataGrouping = {
-			forced: false,
-			units: null
-		};
-	}
-
-	// Axis is instantiated, update all series
-	if (this instanceof Axis) {
-		each(this.series, function (series) {
-			series.update({
-				dataGrouping: dataGrouping
-			}, false);
-		});
-
-	// Axis not yet instanciated, alter series options
-	} else {
-		each(this.chart.options.series, function (seriesOptions) {
-			seriesOptions.dataGrouping = dataGrouping;
-		});
-	}
 };
 
 
@@ -34613,32 +34329,26 @@ Scroller.prototype = {
 		var baseAxis = this.chart.xAxis[0],
 			navAxis = this.xAxis,
 			navAxisOptions = navAxis.options,
-			baseAxisOptions = baseAxis.options,
-			ret;
+			baseAxisOptions = baseAxis.options;
 
 		if (!returnFalseOnNoBaseSeries || baseAxis.dataMin !== null) {
-			ret = {
-				dataMin: pick( // #4053
-					navAxisOptions && navAxisOptions.min, 
-					numExt(
-						'min',
-						baseAxisOptions.min,
-						baseAxis.dataMin, 
-						navAxis.dataMin
-					)
+			return {
+				dataMin: numExt(
+					'min',
+					navAxisOptions && navAxisOptions.min,
+					baseAxisOptions.min,
+					baseAxis.dataMin, 
+					navAxis.dataMin
 				),
-				dataMax: pick(
+				dataMax: numExt(
+					'max',
 					navAxisOptions && navAxisOptions.max,
-					numExt(
-						'max',
-						baseAxisOptions.max,
-						baseAxis.dataMax, 
-						navAxis.dataMax
-					)
+					baseAxisOptions.max,
+					baseAxis.dataMax, 
+					navAxis.dataMax
 				)
 			};
 		}
-		return ret;
 	},
 
 	/**
@@ -34958,21 +34668,13 @@ RangeSelector.prototype = {
 			range = rangeOptions._range,
 			rangeMin,
 			year,
-			timeName,
-			dataGrouping = rangeOptions.dataGrouping;
+			timeName;
 
 		if (dataMin === null || dataMax === null || // chart has no data, base series is removed
 				i === rangeSelector.selected) { // same button is clicked twice
 			return;
 		}
 
-		// Apply dataGrouping associated to button
-		if (dataGrouping) {
-			this.forcedDataGrouping = true;			
-			Axis.prototype.setDataGrouping.call(baseAxis || { chart: this.chart }, dataGrouping, false);
-		}
-
-		// Apply range
 		if (type === 'month' || type === 'year') {
 			timeName = { month: 'Month', year: 'FullYear'}[type];
 			date['set' + timeName](date['get' + timeName]() - count);
@@ -35140,16 +34842,8 @@ RangeSelector.prototype = {
 			this.clickButton(selectedOption, false);
 		}
 
-
+		// normalize the pressed button whenever a new range is selected
 		addEvent(chart, 'load', function () {
-			// If a data grouping is applied to the current button, release it when extremes change
-			addEvent(chart.xAxis[0], 'setExtremes', function (e) {
-				if (this.max - this.min !== chart.fixedRange && e.trigger !== 'rangeSelectorButton' &&
-						e.trigger !== 'updatedData' && rangeSelector.forcedDataGrouping) {
-					this.setDataGrouping(false, false);
-				}
-			});
-			// Normalize the pressed button whenever a new range is selected
 			addEvent(chart.xAxis[0], 'afterSetExtremes', function () {
 				rangeSelector.updateButtonStates(true);
 			});
@@ -35247,30 +34941,6 @@ RangeSelector.prototype = {
 		this[name + 'DateBox'].attr({ text: dateFormat(options.inputDateFormat || '%b %e, %Y', this[name + 'Input'].HCTime) });
 	},
 
-	showInput: function (name) {
-		var inputGroup = this.inputGroup,
-			dateBox = this[name + 'DateBox'];
-
-		css(this[name + 'Input'], {
-			left: (inputGroup.translateX + dateBox.x) + PX,
-			top: inputGroup.translateY + PX,
-			width: (dateBox.width - 2) + PX,
-			height: (dateBox.height - 2) + PX,
-			border: '2px solid silver'
-		});
-	},
-
-	hideInput: function (name) {
-		if (document.activeElement === this[name + 'Input']) { // Prevent running again and again
-			css(this[name + 'Input'], {
-				border: 0,
-				width: '1px',
-				height: '1px'
-			});
-			this.setInputValue(name);
-		}
-	},
-
 	/**
 	 * Draw either the 'from' or the 'to' HTML input box of the range selector
 	 * @param {Object} name
@@ -35313,7 +34983,6 @@ RangeSelector.prototype = {
 				color: '#444'
 			}, chartStyle, options.inputStyle))
 			.on('click', function () {
-				rangeSelector.showInput(name); // If it is already focused, the onfocus event doesn't fire (#3713)
 				rangeSelector[name + 'Input'].focus();
 			})
 			.add(inputGroup);
@@ -35340,11 +35009,22 @@ RangeSelector.prototype = {
 
 		// Blow up the input box
 		input.onfocus = function () {
-			rangeSelector.showInput(name);
+			css(this, {
+				left: (inputGroup.translateX + dateBox.x) + PX,
+				top: inputGroup.translateY + PX,
+				width: (dateBox.width - 2) + PX,
+				height: (dateBox.height - 2) + PX,
+				border: '2px solid silver'
+			});
 		};
 		// Hide away the input box
 		input.onblur = function () {
-			rangeSelector.hideInput(name);
+			css(this, {
+				border: 0,
+				width: '1px',
+				height: '1px'
+			});
+			rangeSelector.setInputValue(name);
 		};
 
 		// handle changes in the input boxes
@@ -35693,8 +35373,13 @@ Highcharts.StockChart = function (options, callback) {
 			marker: {
 				enabled: false,
 				radius: 2
+			},
+			// gapSize: 0,
+			states: {
+				hover: {
+					lineWidth: 2
+				}
 			}
-			// gapSize: 0
 		},
 		columnOptions = {
 			shadow: false,
@@ -35950,7 +35635,7 @@ Axis.prototype.getPlotBandPath = function (from, to) {
 		result = [],
 		i;
 
-	if (path && toPath && path.toString() !== toPath.toString()) {
+	if (path && toPath) {
 		// Go over each subpath
 		for (i = 0; i < path.length; i += 6) {
 			result.push('M', path[i + 1], path[i + 2], 'L', path[i + 4], path[i + 5], toPath[i + 4], toPath[i + 5], toPath[i + 1], toPath[i + 2]);
@@ -36313,7 +35998,7 @@ extend(Highcharts, {
 
 }());
 
-},{}],"/Users/akrasman/github/binomo/graphs/vendor/interact/interact.js":[function(require,module,exports){
+},{}],"/Users/akrasman/Dropbox/Projects/binomo/graphs/vendor/interact/interact.js":[function(require,module,exports){
 /**
  * interact.js v1.2.4
  *
@@ -42146,7 +41831,7 @@ extend(Highcharts, {
 
 } (window));
 
-},{}],"/Users/akrasman/github/binomo/graphs/vendor/lodash/lodash.js":[function(require,module,exports){
+},{}],"/Users/akrasman/Dropbox/Projects/binomo/graphs/vendor/lodash/lodash.js":[function(require,module,exports){
 (function (global){
 /**
  * @license
@@ -53953,7 +53638,7 @@ extend(Highcharts, {
 }.call(this));
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],"/Users/akrasman/github/binomo/graphs/vendor/moment/moment.js":[function(require,module,exports){
+},{}],"/Users/akrasman/Dropbox/Projects/binomo/graphs/vendor/moment/moment.js":[function(require,module,exports){
 //! moment.js
 //! version : 2.10.2
 //! authors : Tim Wood, Iskren Chernev, Moment.js contributors

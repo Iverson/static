@@ -9,6 +9,16 @@
   <script type="text/javascript" src="../dist/Charts.js"></script>
 
   <script type="text/javascript">
+  function generateTick(i) {
+    time = new Date().getTime();
+    if (i) {
+      time -= (400*i);
+    }
+    value = (0.5 - Math.random())/10000 + 1.11950;
+
+    return { "rate": "" + value, "created_at": "" + time/1000 };
+  };
+
   $(document).ready(function() {
 
     var socket = new WebSocket("wss://s1-platform.binomo.com:8443");
@@ -18,19 +28,21 @@
     var data = {'EUR': []};
 
     for (i = 1800; i>0; i--) {
-      time = new Date().getTime() - 30*1000 - 400*i;
-      value = (0.5 - Math.random())/1000 + 1.11950;
-      data['EUR'].push({ "rate": "" + value, "created_at": "" + time/1000 });
+      data['EUR'].push(generateTick(i));
     }
 
-    window.chart = new Charts({el: $('#container')[0], name: 'EUR'});
+    chart = new Charts({el: $('#container')[0], name: 'EUR'});
 
     chart.onReady(function() {
       chart
         .setCollection(data['EUR'])
-        .startListenSocket(socket)
         .setTimer(data['EUR'][data['EUR'].length-1].created_at*1000 + (2 * 60 * 1000))
         .setPrediction(65, false);
+
+        setInterval(function() {
+          var tick = generateTick();
+          chart.addPoint([+tick.created_at*1000, +tick.rate]);
+        }, 1000);
     });
 
     $('.buttons button').click(function() {

@@ -85,16 +85,17 @@
       position: absolute;
       right: 0;
       top: 0;
-      background: #e57878;
+      background: #e75959;
       text-align: center;
       font-size: 10px;
       color: #fff;
+      cursor: default;
     }
 
     .b-embd-chart__value__t:before {
       border-style: solid;
       border-width: 7px 12px;
-      border-color: #e57878 transparent transparent transparent;
+      border-color: #e75959 transparent transparent transparent;
       position: absolute;
       top: 100%;
       left: 50%;
@@ -103,9 +104,75 @@
       font-size: 0;
     }
 
+    .b-embd-chart__value__tooltip {
+      position: absolute;
+      right: 100%;
+      bottom: 100%;
+      margin: 0 0 13px 0;
+      width: 148px;
+      padding: 8px 12px 10px 12px;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 11px;
+      font-weight: bold;
+      line-height: 1.2em;
+      color: #fff;
+      text-align: left;
+      text-transform: uppercase;
+      background: #e75959;
+      display: none;
+    }
+
+    .b-embd-chart__value__t:hover .b-embd-chart__value__tooltip {
+      display: block;
+    }
+
+      .b-embd-chart__value__tooltip .tail {
+        position: absolute;
+        top: 100%;
+        right: 0;
+        width: 7px;
+        height: 7px;
+        overflow: hidden;
+        font-size: 0;
+      }
+
+      .b-embd-chart__value__tooltip .tail:before {
+        border-style: solid;
+        border-width: 7px 7px;
+        border-color: #e75959 transparent transparent transparent;
+        content: "";
+        font-size: 0;
+      }
+
+    .b-embd-chart__value__tooltip .t {
+      font-size: 30px;
+      line-height: 1.1em;
+      margin-bottom: 3px;
+    }
+
+    .b-embd-chart__value__tooltip .up {
+      display: none;
+    }
+
   .b-embd-chart__value.up {
     background: #57c580;
   }
+
+    .b-embd-chart__value.up .b-embd-chart__value__tooltip {
+      background: #57c580;
+    }
+
+      .b-embd-chart__value.up .b-embd-chart__value__tooltip .tail:before {
+        border-top-color: #57c580;
+      }
+
+      .b-embd-chart__value.up .b-embd-chart__value__tooltip .down {
+        display: none;
+      }
+
+      .b-embd-chart__value.up .b-embd-chart__value__tooltip .up {
+        display: inline;
+      }
 
     .b-embd-chart__value.up .b-embd-chart__value__t {
       background: #57c580;
@@ -122,14 +189,45 @@
 
   .b-embd-chart__timer {
     position: absolute;
-    right: 42px;
-    top: 20px;
-    font-size: 20px;
+    width: 150px;
+    right: 35px;
+    top: 10px;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 16px;
     line-height: 1.2em;
+    text-align: right;
     font-weight: bold;
     color: #91bedb;
+    padding: 13px 20px 10px 20px;
     z-index: 2;
+    display: none;
   }
+
+    .b-embd-chart__timer__t {
+      display: none;
+    }
+
+    .b-embd-chart__timer__value {
+      font-size: 26px;
+      margin-bottom: 3px;
+    }
+
+  .b-embd-chart__timer.active {
+    display: block;
+  }
+
+  .b-embd-chart__timer.flash {
+    background: rgba(145, 190, 219, 0.15);
+    right: 65px;
+  }
+
+    .b-embd-chart__timer.flash .b-embd-chart__timer__t {
+      display: block;
+    }
+
+    .b-embd-chart__timer {
+
+    }
 
   .b-embd-chart__menu {
     position: absolute;
@@ -153,11 +251,11 @@
       text-align: center;
     }
 
-    .area .b-embd-chart__menu .area, .split .b-embd-chart__menu .area {
+    .area .b-embd-chart__menu .area, .split .b-embd-chart__menu .area, .split-full .b-embd-chart__menu .area {
       display: none;
     }
 
-    .candlestick .b-embd-chart__menu .candlestick, .split .b-embd-chart__menu .candlestick {
+    .candlestick .b-embd-chart__menu .candlestick, .split .b-embd-chart__menu .candlestick, .split-full .b-embd-chart__menu .candlestick {
       display: none;
     }
 
@@ -176,7 +274,16 @@
     height: 100%;
     left: 0;
     top: 0;
+    overflow: hidden;
   }
+
+    .b-embd-chart__graph__placeholder {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      bottom: -68px;
+    }
 
   .b-embd-chart__graph_area {
   }
@@ -195,22 +302,48 @@
     opacity: 1;
   }
 
-  .split .b-embd-chart__graph_area, .split .b-embd-chart__graph_candlestick {
+  .split .b-embd-chart__graph_area, .split .b-embd-chart__graph_candlestick, .split-full .b-embd-chart__graph_area, .split-full .b-embd-chart__graph_candlestick {
     width: 50%;
     opacity: 1;
   }
 
-  .split .b-embd-chart__graph_area {
+  .split .b-embd-chart__graph_area, .split-full .b-embd-chart__graph_area {
     left: 0;
   }
 
-  .split .b-embd-chart__graph_candlestick {
+  .split .b-embd-chart__graph_candlestick, .split-full .b-embd-chart__graph_candlestick {
     left: auto;
     right: 0;
   }
 
-  .split .b-embd-chart__split-resize {
+  .split .b-embd-chart__split-resize, .split-full .b-embd-chart__split-resize {
     display: block;
+  }
+
+  .split-full .b-embd-chart__ranges {
+    bottom: 68px;
+  }
+
+  .split-full .b-embd-chart__scroll-panel {
+    bottom: 89px;
+  }
+
+  .split-full .b-embd-chart__graph__placeholder {
+    bottom: 0;
+  }
+
+    .split-full .b-embd-chart__graph__placeholder:after {
+      position: absolute;
+      content: "";
+      width: 100%;
+      height: 68px;
+      bottom: 0;
+      left: 0;
+      z-index: 2;
+    }
+
+  .highcharts-navigator, .highcharts-navigator-handle-left, .highcharts-navigator-handle-right {
+    display: none;
   }
 
   .b-embd-chart__split-resize {
@@ -233,7 +366,7 @@
       margin: -8px 0 0 0;
     }
 
-    .b-embd-chart__graph__scroll-panel {
+    .b-embd-chart__scroll-panel {
       width: 162px;
       height: 35px;
       background: rgba(248, 248, 248, 0.8);
@@ -243,30 +376,30 @@
       bottom: 40px;
       margin-left: -82px;
       font-size: 0;
-      opacity: 0;
+      /*opacity: 0;*/
       transition: opacity 0.2s ease-out;
       z-index: 6;
     }
 
-    .b-embd-chart__graph:hover .b-embd-chart__graph__scroll-panel {
+    .b-embd-chart:hover .b-embd-chart__scroll-panel {
       opacity: 1;
     }
 
-      .b-embd-chart__graph__scroll-panel .b-embd-icon {
+      .b-embd-chart__scroll-panel .b-embd-icon {
         margin: 9px 7px 0 8px;
         cursor: pointer;
       }
 
-  .b-embd-chart__graph__ranges {
+  .b-embd-chart__ranges {
     position: absolute;
-    bottom: 0px;
+    bottom: 0;
     left: 0;
     margin: 0;
     padding: 0;
     z-index: 6;
   }
 
-    .b-embd-chart__graph__ranges li {
+    .b-embd-chart__ranges li {
       float: left;
       cursor: pointer;
       font-size: 8px;
@@ -278,11 +411,11 @@
       list-style: none;
     }
 
-    .b-embd-chart__graph__ranges li:hover {
+    .b-embd-chart__ranges li:hover {
       background: #e0e1e3;
     }
 
-    .b-embd-chart__graph__ranges li.active {
+    .b-embd-chart__ranges li.active {
       background: #c0c1c3;
     }
 
