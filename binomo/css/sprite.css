@@ -1,0 +1,299 @@
+.b-icon {
+  background: url( '../images/sprite.png' ) no-repeat;
+  background-size: 637px 631px;
+}
+
+.b-icon.i-logo-watermark-big {
+  width: 391px;
+  height: 392px;
+  background-position: 0px 0px;
+}
+
+.b-icon.i-chart-settings-active {
+  width: 246px;
+  height: 97px;
+  background-position: -391px 0px;
+}
+
+.b-icon.i-chart-settings-color {
+  width: 245px;
+  height: 95px;
+  background-position: -391px -97px;
+}
+
+.b-icon.i-chart-settings-date {
+  width: 233px;
+  height: 108px;
+  background-position: -391px -192px;
+}
+
+.b-icon.i-chart-settings-real {
+  width: 233px;
+  height: 95px;
+  background-position: 0px -392px;
+}
+
+.b-icon.i-spr-wallet {
+  width: 36px;
+  height: 144px;
+  background-position: 0px -487px;
+}
+
+.b-icon.i-mini-chart-4 {
+  width: 141px;
+  height: 44px;
+  background-position: -391px -300px;
+}
+
+.b-icon.i-mini-chart-2 {
+  width: 140px;
+  height: 54px;
+  background-position: -233px -392px;
+}
+
+.b-icon.i-mini-chart-5 {
+  width: 133px;
+  height: 46px;
+  background-position: -391px -344px;
+}
+
+.b-icon.i-mini-chart-3 {
+  width: 133px;
+  height: 45px;
+  background-position: -373px -392px;
+}
+
+.b-icon.i-mini-chart-6 {
+  width: 130px;
+  height: 44px;
+  background-position: -506px -392px;
+}
+
+.b-icon.i-spr-deal-tail {
+  width: 91px;
+  height: 124px;
+  background-position: -36px -487px;
+}
+
+.b-icon.i-mini-chart-1 {
+  width: 124px;
+  height: 39px;
+  background-position: -233px -446px;
+}
+
+.b-icon.i-spr-deails-pics {
+  width: 24px;
+  height: 100px;
+  background-position: -127px -487px;
+}
+
+.b-icon.i-logo-watermark {
+  width: 86px;
+  height: 86px;
+  background-position: -151px -487px;
+}
+
+.b-icon.i-clock-loading {
+  width: 25px;
+  height: 37px;
+  background-position: -532px -300px;
+}
+
+.b-icon.i-go-up {
+  width: 32px;
+  height: 32px;
+  background-position: -557px -300px;
+}
+
+.b-icon.i-go-down {
+  width: 32px;
+  height: 32px;
+  background-position: -589px -300px;
+}
+
+.b-icon.i-cup {
+  width: 32px;
+  height: 32px;
+  background-position: -524px -344px;
+}
+
+.b-icon.i-spr-chart-double-full {
+  width: 25px;
+  height: 32px;
+  background-position: -556px -344px;
+}
+
+.b-icon.i-spr-chart-wide {
+  width: 25px;
+  height: 32px;
+  background-position: -581px -344px;
+}
+
+.b-icon.i-spr-chart-double {
+  width: 25px;
+  height: 32px;
+  background-position: -606px -344px;
+}
+
+.b-icon.i-spr-chart-mini {
+  width: 12px;
+  height: 32px;
+  background-position: -624px -192px;
+}
+
+.b-icon.i-plus {
+  width: 28px;
+  height: 28px;
+  background-position: -357px -446px;
+}
+
+.b-icon.i-chat {
+  width: 26px;
+  height: 22px;
+  background-position: -385px -446px;
+}
+
+.b-icon.i-slider-drag {
+  width: 24px;
+  height: 25px;
+  background-position: -237px -487px;
+}
+
+.b-icon.i-uarr-dark-tail {
+  width: 24px;
+  height: 24px;
+  background-position: -261px -487px;
+}
+
+.b-icon.i-f-uk {
+  width: 24px;
+  height: 18px;
+  background-position: -411px -446px;
+}
+
+.b-icon.i-f-ru {
+  width: 24px;
+  height: 18px;
+  background-position: -435px -446px;
+}
+
+.b-icon.i-f-fr {
+  width: 24px;
+  height: 18px;
+  background-position: -459px -446px;
+}
+
+.b-icon.i-f-de {
+  width: 24px;
+  height: 18px;
+  background-position: -483px -446px;
+}
+
+.b-icon.i-scroll-right {
+  width: 16px;
+  height: 22px;
+  background-position: -621px -300px;
+}
+
+.b-icon.i-bet {
+  width: 21px;
+  height: 21px;
+  background-position: -285px -487px;
+}
+
+.b-icon.i-time {
+  width: 21px;
+  height: 21px;
+  background-position: -306px -487px;
+}
+
+.b-icon.i-cashback {
+  width: 21px;
+  height: 21px;
+  background-position: -327px -487px;
+}
+
+.b-icon.i-download {
+  width: 16px;
+  height: 16px;
+  background-position: -507px -446px;
+}
+
+.b-icon.i-darr-tail {
+  width: 16px;
+  height: 16px;
+  background-position: -523px -446px;
+}
+
+.b-icon.i-remove {
+  width: 16px;
+  height: 16px;
+  background-position: -539px -446px;
+}
+
+.b-icon.i-upload {
+  width: 16px;
+  height: 16px;
+  background-position: -555px -446px;
+}
+
+.b-icon.i-darr {
+  width: 16px;
+  height: 16px;
+  background-position: -571px -446px;
+}
+
+.b-icon.i-uarr {
+  width: 16px;
+  height: 16px;
+  background-position: -587px -446px;
+}
+
+.b-icon.i-uarr-tail {
+  width: 16px;
+  height: 16px;
+  background-position: -603px -446px;
+}
+
+.b-icon.i-settings {
+  width: 16px;
+  height: 16px;
+  background-position: -619px -446px;
+}
+
+.b-icon.i-logout {
+  width: 16px;
+  height: 16px;
+  background-position: -348px -487px;
+}
+
+.b-icon.i-messages {
+  width: 16px;
+  height: 16px;
+  background-position: -364px -487px;
+}
+
+.b-icon.i-personal {
+  width: 16px;
+  height: 16px;
+  background-position: -380px -487px;
+}
+
+.b-icon.i-clock {
+  width: 13px;
+  height: 13px;
+  background-position: -624px -224px;
+}
+
+.b-icon.i-close {
+  width: 9px;
+  height: 9px;
+  background-position: -624px -237px;
+}
+
+.b-icon.i-checked {
+  width: 8px;
+  height: 6px;
+  background-position: -624px -246px;
+}
+

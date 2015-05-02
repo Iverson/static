@@ -1,0 +1,24 @@
+html, body, div, * {
+  padding: 0;
+  margin: 0;
+  border: none;
+}
+
+.l-page {
+  width: 100%;
+  min-width: 1000px;
+}
+
+.buttons {
+  padding: 20px 20px;
+}
+
+  .buttons button {
+    font-size: 14px;
+    background: #fff;
+    border: 1px solid #ddd;
+    line-height: 28px;
+    padding: 0 15px;
+    cursor: pointer;
+    margin-right: 8px;
+  }

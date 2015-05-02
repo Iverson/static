@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <title>Graphics</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="/dist/Charts.css" />
+  <script type="text/javascript" src="/vendor/jquery/dist/jquery.js"></script>
+  <script type="text/javascript" src="/dist/Charts.js"></script>
+
+  <script type="text/javascript">
+  function generateTick(i) {
+    time = new Date().getTime();
+    if (i) {
+      time -= (400*i);
+    }
+    value = (0.5 - Math.random())/10000 + 1.11950;
+
+    return { "rate": "" + value, "created_at": "" + time/1000 };
+  };
+
+  $(document).ready(function() {
+
+    var socket = new WebSocket("wss://s1-platform.binomo.com:8443");
+    var timer = new Date().getTime();
+
+    var time, value;
+    var data = {'EUR': []};
+
+    for (i = 1800; i>0; i--) {
+      data['EUR'].push(generateTick(i));
+    }
+
+    chart = new Charts({el: $('#container')[0], name: 'EUR'});
+
+    chart.onReady(function() {
+      chart
+        .setCollection(data['EUR'])
+        .setTimer(data['EUR'][data['EUR'].length-1].created_at*1000 + (2 * 60 * 1000))
+        .setPrediction(65, false);
+
+        setInterval(function() {
+          var tick = generateTick();
+          chart.addPoint([+tick.created_at*1000, +tick.rate]);
+        }, 1000);
+    });
+
+    $('.buttons button').click(function() {
+      chart.viewMode($(this).attr('mode'));
+    });
+  });
+  </script>
+</head>
+<body>
+  <div class="l-page">
+    <div class="buttons">
+      <button mode="candlestick">Single</button>
+      <button mode="split">Split</button>
+      <button mode="split-full">Split full</button>
+    </div>
+
+    <div id="container" style="height: 400px; min-width: 310px"></div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+	<title>Binomo</title>
+  <link rel="stylesheet" type="text/css" href="css/reset.css"  />
+	<link rel="stylesheet" type="text/css" href="vendor/graphs/dist/Charts.css"  />
+  <link rel="stylesheet" type="text/css" href="css/sprite.css"  />
+	<link rel="stylesheet" type="text/css" href="css/style.css"  />
+  <script type="text/javascript" src="vendor/jquery/dist/jquery.min.js"></script>
+	<script type="text/javascript" src="vendor/graphs/dist/Charts.js"></script>
+	<script type="text/javascript" src="js/application.js"></script>
+</head>
+<body>
+	<div class="l-page">
+    <header class="b-head">
+      <div class="b-topbar">
+        <a href="/" class="b-logo"></a>
+
+        <ul class="b-menu">
+          <li class="b-menu__item active">
+            <a class="b-menu__item__link" href="#">торговля</a>
+          </li>
+          <li class="b-menu__item">
+            <a class="b-menu__item__link" href="#">касса</a>
+          </li>
+          <li class="b-menu__item b-menu__item_help">
+            <a class="b-menu__item__link" href="#">помощь</a>
+            <a href="#" class="b-menu__item__addlink">Как торговать?</a>
+          </li>
+        </ul>
+
+        <div class="b-topbar__finance">
+          <span class="b-topbar__finance__balance">$1000 <small>демо <span><br />счет</span></small></span>
+          <div class="b-topbar__finance__btn">
+            <i class="b-icon-spr b-icon-spr_36"><i class="b-icon i-spr-wallet"></i></i>
+            открыть счет
+          </div>
+        </div>
+
+        <div class="b-topbar__right">
+
+          <div class="b-dropdown b-dropdown_menu">
+            <div class="b-dropdown__t">
+              <img src="images/tmp/avatar.jpg" class="b-dropdown__avatar" />Василий Петров <i class="darr"></i>
+            </div>
+            <ul class="b-dropdown__catlist">
+              <li><a href="#"><i class="b-icon i-settings"></i>Настройки</a></li>
+              <li><a href="#"><i class="b-icon i-personal"></i>Персональные данные</a></li>
+              <li><a href="#"><i class="b-icon i-download"></i>Внести средства</a></li>
+              <li><a href="#"><i class="b-icon i-upload"></i>Вывести средства</a></li>
+              <li><a href="#"><i class="b-icon i-messages"></i>Мои вопросы</a></li>
+              <li class="logout"><a href="#"><i class="b-icon i-logout"></i>Выход</a></li>
+            </ul>
+          </div>
+
+          <div class="b-dropdown b-dropdown_icons">
+            <div class="b-dropdown__t"></div>
+            <ul class="b-dropdown__catlist">
+              <li class="active"><i class="b-icon i-f-ru"></i></li>
+              <li><i class="b-icon i-f-uk"></i></li>
+              <li><i class="b-icon i-f-fr"></i></li>
+              <li><i class="b-icon i-f-de"></i></li>
+            </ul>
+          </div>
+
+        </div>
+      </div>
+    </header>
+
+    <div class="b-dashboard">
+      <i class="b-icon i-logo-watermark-big b-logo-watermark"></i>
+
+      <div class="b-deal b-deal_wide">
+
+        <div class="b-deal__l">
+          <div class="b-graph b-deal__graph">
+            <div class="b-graph__h clearfix">
+              <div class="b-graph__h__deal">
+                <div class="b-dropdown b-dropdown_deals">
+                  <div class="b-dropdown__t">
+                    AUD/CAD <i class="darr"></i>
+                  </div>
+                  <div class="b-dropdown__catlist">
+                    <div class="b-dropdown_deals__menu">
+                      <ul class="b-dropdown_deals__menu__sections">
+                        <li class="active">популярные</li>
+                        <li>валюта</li>
+                        <li>индексы</li>
+                        <li>товары</li>
+                        <li>акции</li>
+                      </ul>
+                      <ul class="b-dropdown_deals__menu__actions">
+                        <li><i class="b-icon i-remove"></i>удалить</li>
+                      </ul>
+                    </div>
+                    <div class="b-dropdown_deals__list">
+                      <table class="b-deals-table">
+                        <thead>
+                          <tr>
+                            <th>актив</th>
+                            <th>доход</th>
+                            <th>время до закрытия</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr class="popular">
+                            <td class="name">EUR / USD</td>
+                            <td class="profit">80%</td>
+                            <td class="time">8 часов 45 минут</td>
+                          </tr>
+                          <tr class="popular">
+                            <td class="name">ЗОЛОТО</td>
+                            <td class="profit">78%</td>
+                            <td class="time">8 часов 37 минут</td>
+                          </tr>
+                          <tr class="popular last">
+                            <td class="name">gbp / usd</td>
+                            <td class="profit">76%</td>
+                            <td class="time">8 часов  30 минут</td>
+                          </tr>
+                          <tr>
+                            <td class="name">EUR / GBP</td>
+                            <td class="profit">70%</td>
+                            <td class="time">8 часов  20 минут</td>
+                          </tr>
+                          <tr class="active">
+                            <td class="name">AUD / CAD</td>
+                            <td class="profit">60%</td>
+                            <td class="time">8 часов  20 минут</td>
+                          </tr>
+                          <tr>
+                            <td class="name">GBP / JPY</td>
+                            <td class="profit">60%</td>
+                            <td class="time">8 часов  20 минут</td>
+                          </tr>
+                          <tr>
+                            <td class="name">USD / CHF</td>
+                            <td class="profit">60%</td>
+                            <td class="time">8 часов  15 минут</td>
+                          </tr>
+                          <tr>
+                            <td class="name">APPLE</td>
+                            <td class="profit">60%</td>
+                            <td class="time">7 часов 38 минут</td>
+                          </tr>
+                          <tr>
+                            <td class="name">GOOGLE</td>
+                            <td class="profit">60%</td>
+                            <td class="time">7 часов  22 минут</td>
+                          </tr>
+                          <tr class="inactive first">
+                            <td class="name">FACEBOOK</td>
+                            <td class="profit">58%</td>
+                            <td class="time">старт через 1 час 26 минут</td>
+                          </tr>
+                          <tr class="inactive">
+                            <td class="name">AMAZON</td>
+                            <td class="profit">55%</td>
+                            <td class="time">старт через 6 часов 18 минут</td>
+                          </tr>
+                          <tr class="inactive">
+                            <td class="name">YAHOO!</td>
+                            <td class="profit">53%</td>
+                            <td class="time">закрыт</td>
+                          </tr>
+                          <tr class="inactive">
+                            <td class="name">COCA COLA</td>
+                            <td class="profit">50%</td>
+                            <td class="time">закрыт</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div class="clearer"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="b-graph__period">
+                <div class="b-dropdown b-dropdown_time">
+                  <div class="b-dropdown__t">
+                    15 сек <i class="darr"></i>
+                  </div>
+                  <ul class="b-dropdown__catlist">
+                    <li>1 минута</li>
+                    <li>3 минуты</li>
+                    <li>5 минут</li>
+                    <li>10 минут</li>
+                    <li>15 минут</li>
+                    <li class="active">30 минут</li>
+                    <li>45 минут</li>
+                  </ul>
+                </div>
+                <div class="b-dropdown b-dropdown_time active">
+                  <div class="b-dropdown__t">
+                    30 мин <i class="darr"></i>
+                  </div>
+                  <ul class="b-dropdown__catlist">
+                    <li>1 минута</li>
+                    <li>3 минуты</li>
+                    <li>5 минут</li>
+                    <li>10 минут</li>
+                    <li>15 минут</li>
+                    <li class="active">30 минут</li>
+                    <li>45 минут</li>
+                  </ul>
+                </div>
+                <div class="b-dropdown b-dropdown_time">
+                  <div class="b-dropdown__t">
+                    1 час <i class="darr"></i>
+                  </div>
+                  <ul class="b-dropdown__catlist">
+                    <li>1 минута</li>
+                    <li>3 минуты</li>
+                    <li>5 минут</li>
+                    <li>10 минут</li>
+                    <li>15 минут</li>
+                    <li class="active">30 минут</li>
+                    <li>45 минут</li>
+                  </ul>
+                </div>
+              </div>
+              <div class="b-graph__modes">
+                <i class="b-icon-spr" mode="candlestick"><i class="b-icon i-spr-chart-mini"></i></i>
+                <i class="b-icon-spr active" mode="candlestick" wide="true"><i class="b-icon i-spr-chart-wide"></i></i>
+                <i class="b-icon-spr" mode="split" wide="true"><i class="b-icon i-spr-chart-double"></i></i>
+                <i class="b-icon-spr" mode="split-full" wide="true"><i class="b-icon i-spr-chart-double-full"></i></i>
+              </div>
+            </div>
+            <div class="b-graph__canvas">
+
+            </div>
+          </div>
+          <div class="b-deal__form clearfix">
+            <div class="b-deal__form__group b-deal__form__bet">
+              <div class="b-deal__form__bet__watermark">
+                <i class="b-icon i-logo-watermark"></i>
+              </div>
+
+              <dl class="b-deal__form__dl b-deal__form__dl_mini b-deal__form__dl_icon">
+                <dt>
+                  <i class="b-icon i-bet"></i>
+                  сумма
+                </dt>
+                <dd>
+                  <div class="b-dropdown b-dropdown_block b-dropdown_white">
+                    <div class="b-dropdown__t">
+                      $0 <i class="darr"></i>
+                    </div>
+                    <ul class="b-dropdown__catlist">
+                      <li class="active">$0</li>
+                      <li>$5</li>
+                      <li>$10</li>
+                      <li>$30</li>
+                      <li>$50</li>
+                      <li>$100</li>
+                    </ul>
+                  </div>
+                </dd>
+              </dl>
+              <dl class="b-deal__form__dl b-deal__form__dl_mini b-deal__form__dl_icon">
+                <dt>
+                  <i class="b-icon i-time"></i>
+                  Время
+                </dt>
+                <dd>
+                  <div class="b-dropdown b-dropdown_block b-dropdown_white">
+                    <div class="b-dropdown__t">
+                      13:42 <i class="darr"></i>
+                    </div>
+                    <ul class="b-dropdown__catlist">
+                      <li>13:41</li>
+                      <li class="active">13:42</li>
+                      <li>13:43</li>
+                      <li>13:44</li>
+                      <li>13:45</li>
+                    </ul>
+                  </div>
+                </dd>
+              </dl>
+            </div>
+            <div class="b-deal__form__group b-deal__form__cashback">
+              <dl class="b-deal__form__dl b-deal__form__dl_icon">
+                <dt>
+                  <i class="b-icon i-cashback"></i>
+                  сумма возврата <span class="value">0%</span>
+                </dt>
+                <dd>
+                  <div class="b-slider">
+                    <div class="b-slider__track">
+                      <div class="b-slider__track__l">
+                        <i class="b-icon i-slider-drag b-slider__drag"><i class="b-slider__drag__val"><span>$125</span></i></i>
+                      </div>
+                    </div>
+                  </div>
+                </dd>
+              </dl>
+            </div>
+            <div class="b-deal__form__group b-deal__form__payment">
+              <dl class="b-deal__form__dl b-deal__form__dl_white">
+                <dt>выплата</dt>
+                <dd>$0</dd>
+              </dl>
+            </div>
+            <div class="b-deal__form__group b-deal__form__opinions">
+              <div class="b-deal__form__opinions__beting">
+                <div class="left">
+                  <a href="#" class="b-btn b-btn_green b-btn_icon b-btn_big b-btn_block"><i class="b-icon i-go-up"></i></a>
+                </div>
+                <div class="right">
+                  <a href="#" class="b-btn b-btn_red b-btn_icon b-btn_big b-btn_block"><i class="b-icon i-go-down"></i></a>
+                </div>
+              </div>
+              <div class="b-deal__form__opinions__most">
+                <dl class="b-deal__form__dl b-deal__form__dl_white">
+                  <dt>мнение большинства</dt>
+                  <dd>
+                    <div class="b-percents">
+                      <span class="b-percents__side left">13%</span>
+                      <span class="b-percents__side right">87%</span>
+                      <div class="b-percents__track">
+                        <span class="b-percents__positive" style="width: 13%;"></span>
+                        <span class="b-percents__negative"></span>
+                      </div>
+                    </div>
+                  </dd>
+                </dl>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="b-deal b-deal_placeholder">
+        <div class="b-deal__l">
+          <i class="b-icon i-plus"></i>добавить график
+        </div>
+      </div>
+      <div class="b-deal b-deal_placeholder">
+        <div class="b-deal__l">
+          <i class="b-icon i-plus"></i>добавить график
+        </div>
+      </div>
+
+    </div>
+
+    <div class="b-support">
+      <div class="b-support__toggle">
+        <div class="default">
+          <i class="b-icon i-chat"></i>консультант
+        </div>
+        <div class="opened">
+          <i class="b-icon i-close"></i>завершить
+        </div>
+      </div>
+      <div class="b-support__chat">
+        <ul class="b-support__chat__messages">
+          <li class="b-support__chat__messages__item">
+            <img class="b-support__chat__messages__userpic" src="images/tmp/1.jpg" />
+            <p class="b-support__chat__messages__t">Алексей &nbsp;&nbsp;(13:41)</p>
+            <p class="b-support__chat__messages__text">Здравствуйте, чем я могу Вам помочь?</p>
+          </li>
+          <li class="b-support__chat__messages__item">
+            <img class="b-support__chat__messages__userpic" src="images/tmp/2.jpg" />
+            <p class="b-support__chat__messages__t">Вы &nbsp;&nbsp;(13:43)</p>
+            <p class="b-support__chat__messages__text">Здравствуйте, Художественная контаминация готично образует феномер "психической мутации", таким образом, сходные законы</p>
+          </li>
+          <li class="b-support__chat__messages__item">
+            <img class="b-support__chat__messages__userpic" src="images/tmp/1.jpg" />
+            <p class="b-support__chat__messages__t">Алексей</p>
+            <p class="b-support__chat__messages__status">печатает...</p>
+          </li>
+        </ul>
+        <div class="b-support__chat__new-message">
+          <a href="#" class="b-btn b-btn_dark">ok</a>
+          <div class="b-input b-input_small">
+            <textarea placeholder="Введите текст"></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="b-bottom-bar ">
+      <div class="b-bottom-bar__toggle">
+        <div class="collapsed">
+          <i class="b-icon i-uarr-tail"></i>
+          <i class="b-icon i-cup"></i>
+        </div>
+        <div class="expanded">
+          <i class="b-icon i-darr-tail"></i>
+          удачные сделки
+        </div>
+      </div>
+      <ul class="b-success-deals">
+        <li class="b-success-deals__item">
+          <i class="b-icon i-cup"></i>
+          <p class="h"><span class="price">$67</span>  <span class="currency">EUR/USD</span></p>
+          <p class="name">алексей трофимов</p>
+        </li>
+        <li class="b-success-deals__item">
+          <i class="b-icon i-cup"></i>
+          <p class="h"><span class="price">$13</span>  <span class="currency">AUD/CAD</span></p>
+          <p class="name">вячеслав борин</p>
+        </li>
+        <li class="b-success-deals__item">
+          <i class="b-icon i-cup"></i>
+          <p class="h"><span class="price">$400</span>  <span class="currency">GAZPROM</span></p>
+          <p class="name">алексей шугин</p>
+        </li>
+        <li class="b-success-deals__item">
+          <i class="b-icon i-cup"></i>
+          <p class="h"><span class="price">$488</span>  <span class="currency">GOOGLE</span></p>
+          <p class="name">борис негодяев</p>
+        </li>
+        <li class="b-success-deals__item">
+          <i class="b-icon i-cup"></i>
+          <p class="h"><span class="price">$310</span>  <span class="currency">GOLD</span></p>
+          <p class="name">марина вастлева</p>
+        </li>
+        <li class="b-success-deals__item">
+          <i class="b-icon i-cup"></i>
+          <p class="h"><span class="price">$13</span>  <span class="currency">AUD/CAD</span></p>
+          <p class="name">вячеслав борин</p>
+        </li>
+        <li class="b-success-deals__item">
+          <i class="b-icon i-cup"></i>
+          <p class="h"><span class="price">$400</span>  <span class="currency">GAZPROM</span></p>
+          <p class="name">алексей шугин</p>
+        </li>
+        <li class="b-success-deals__item">
+          <i class="b-icon i-cup"></i>
+          <p class="h"><span class="price">$488</span>  <span class="currency">GOOGLE</span></p>
+          <p class="name">борис негодяев</p>
+        </li>
+        <li class="b-success-deals__item">
+          <i class="b-icon i-cup"></i>
+          <p class="h"><span class="price">$310</span>  <span class="currency">GOLD</span></p>
+          <p class="name">марина вастлева</p>
+        </li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>

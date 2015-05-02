@@ -1,0 +1,25 @@
+{
+  "name": "graphs",
+  "version": "0.1.0",
+  "authors": [
+    "Iverson <akrasman@gmail.com>"
+  ],
+  "license": "MIT",
+  "private": true,
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ],
+  "dependencies": {
+    "jquery": "~2.1.3"
+  },
+  "devDependencies": {
+    "highstock-release": "~2.1.4",
+    "lodash": "~3.6.0",
+    "interact": "~1.2.4",
+    "moment": "~2.10.2"
+  }
+}
