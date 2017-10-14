@@ -1,0 +1,15 @@
+<app-menu
+  [tabs]="[
+    {name: 'Support', route: '../all'},
+    {name: 'Total Replies', route: '../replies'},
+    {name: 'Daily', route: '../daily'}
+  ]"
+  [@menuAnimation]="true"
+  (@menuAnimation.done)="menuAnimationDone()"
+></app-menu>
+<chart class="chart-container"
+  *ngIf="showChart"
+  type="line"
+  [series]="data"
+></chart>
+

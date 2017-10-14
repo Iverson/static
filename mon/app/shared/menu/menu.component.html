@@ -1,0 +1,8 @@
+<a class="chart-tabs-item"
+  *ngFor="let tab of tabs"
+  href="javascript:void(0)"
+  [routerLink]="[tab.route]"
+  routerLinkActive="active"
+><span>{{tab.name}}</span></a>
+
+<span class="logo"></span>

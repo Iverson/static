@@ -1,0 +1,15 @@
+<app-menu
+  [tabs]="[
+    {name: 'Affilate Programm', route: '../all'},
+    {name: 'This month', route: '../month'}
+  ]"
+  [@menuAnimation]="true"
+  (@menuAnimation.done)="menuAnimationDone()"
+></app-menu>
+<chart class="chart-container"
+  *ngIf="showChart"
+  type="bar"
+  [series]="data"
+  [legendAlign]="'start'"
+></chart>
+
