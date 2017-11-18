@@ -1,0 +1,16 @@
+{
+  "support": [
+    "daily",
+    "support",
+    "total_replies"
+  ],
+  "sales": [
+    "in",
+    "monthly",
+    "vip_sales"
+  ],
+  "affilate": [
+    "affilate_programm",
+    "this_month"
+  ]
+}
